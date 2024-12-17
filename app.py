@@ -1,10 +1,26 @@
 '''
-Author: Mihretab Nigatu
-Date: 2024-08-13 12:54:27
-LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
-LastEditTime: 2024-12-17 18:20:48
-FilePath: \Projects\Python\Speech Assisitant\tempCodeRunnerFile-DESKTOP-BSMK02T.py
-Description: A personal Voice assistant with the support of wikipedia, EleutherAI/gpt-neo-125M, weather, and other functionalities with only voice commands.
+Author: Mih-Nig-Afe mtabdevt@gmail.com
+Date: 2024-12-05 20:59:45
+LastEditors: Mihretab Nigatu mtabdevt@gmail.com
+LastEditTime: 2024-12-17 21:23:17
+FilePath: \Voice Assisitant\app.py
+Description:
+This project is an AI-based voice assistant named "Miehab" that interacts with users through speech. 
+
+Features:
+- Speech recognition using `speech_recognition`.
+- Text-to-speech responses with `pyttsx3`.
+- AI-powered replies via GPT-Neo from `transformers`.
+- Weather updates using OpenWeather API.
+- Wikipedia integration for topic summaries.
+
+How to Use:
+1. Install the required libraries.
+2. Add your OpenWeather API key.
+3. Run the script to start interacting with Miehab.
+
+Note: Ensure your microphone and speakers are configured correctly.
+
 '''
 
 import speech_recognition as sr
