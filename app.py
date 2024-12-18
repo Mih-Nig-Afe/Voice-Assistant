@@ -2,7 +2,7 @@
 Author: Mih-Nig-Afe mtabdevt@gmail.com
 Date: 2024-12-05 20:59:45
 LastEditors: Mihretab Nigatu mtabdevt@gmail.com
-LastEditTime: 2024-12-18 12:44:41
+LastEditTime: 2024-12-18 13:03:18
 FilePath: \Voice Assistant\app.py
 Description:
 This project is an AI-based voice assistant named "Miehab" that interacts with users through speech. 
