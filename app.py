@@ -2,7 +2,7 @@
 Author: Mih-Nig-Afe mtabdevt@gmail.com
 Date: 2024-12-05 20:59:45
 LastEditors: Mihretab Nigatu mtabdevt@gmail.com
-LastEditTime: 2024-12-18 11:53:35
+LastEditTime: 2024-12-18 12:44:41
 FilePath: \Voice Assistant\app.py
 Description:
 This project is an AI-based voice assistant named "Miehab" that interacts with users through speech. 
@@ -47,7 +47,7 @@ except Exception as e:
 engine = pyttsx3.init()
 engine.setProperty("rate", 160)  # Adjust speech rate
 voices = engine.getProperty("voices")
-# Select a male voice if available
+# Select  male voice
 male_voice = next((voice for voice in voices if "male" in voice.name.lower()), voices[0])
 engine.setProperty("voice", male_voice.id)
 
@@ -107,7 +107,7 @@ def listen():
 def generate_ai_response(prompt):
     if generator:
         try:
-            response = generator(prompt, max_length=50, num_return_sequences=1)
+            response = generator(prompt, max_length=100, num_return_sequences=1)
             return response[0]["generated_text"].strip()
         except Exception as e:
             print(f"Error generating AI response: {e}")
