@@ -2,8 +2,8 @@
 Author: Mih-Nig-Afe mtabdevt@gmail.com
 Date: 2024-12-05 20:59:45
 LastEditors: Mihretab Nigatu mtabdevt@gmail.com
-LastEditTime: 2024-12-17 21:23:17
-FilePath: \Voice Assisitant\app.py
+LastEditTime: 2024-12-18 11:53:35
+FilePath: \Voice Assistant\app.py
 Description:
 This project is an AI-based voice assistant named "Miehab" that interacts with users through speech. 
 
@@ -55,8 +55,8 @@ engine.setProperty("voice", male_voice.id)
 engine_lock = threading.Lock()
 
 # Define paths to the beep sound files
-START_BEEP_PATH = r'c:\Users\TS PDA\Documents\Projects\Python\Voice Assisitant\sounds1\point-smooth-beep-230573.wav'
-STOP_BEEP_PATH = r'c:\Users\TS PDA\Documents\Projects\Python\Voice Assisitant\sounds1\beep-6-96243.wav'
+START_BEEP_PATH = r'c:\Users\TS PDA\Documents\Projects\Python\Voice Assistant\sounds1\point-smooth-beep-230573.wav'
+STOP_BEEP_PATH = r'c:\Users\TS PDA\Documents\Projects\Python\Voice Assistant\sounds1\beep-6-96243.wav'
 
 # Function to play beep sound
 def play_beep(start=True):
