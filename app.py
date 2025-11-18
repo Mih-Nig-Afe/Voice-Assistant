@@ -1,11 +1,11 @@
-'''
+r'''
 Author: Mih-Nig-Afe mtabdevt@gmail.com
 Date: 2024-12-05 20:59:45
 LastEditors: Mihretab Nigatu mtabdevt@gmail.com
 LastEditTime: 2024-12-18 13:03:18
 FilePath: \Voice Assistant\app.py
 Description:
-This project is an AI-based voice assistant named "Miehab" that interacts with users through speech. 
+This project is an AI-based voice assistant named "Miehab" that interacts with users through speech.
 
 Features:
 - Speech recognition using `speech_recognition`.
@@ -31,7 +31,8 @@ import requests
 import wikipedia
 import threading
 import os
-from playsound import playsound  # Updated library for sound playback
+from playsound3 import playsound  # Updated library for sound playback
+import win32com.client  # Windows SAPI for more reliable TTS
 
 # Suppress warnings from transformers
 set_verbosity_error()
@@ -43,16 +44,31 @@ except Exception as e:
     print(f"AI generation is currently unavailable: {e}")
     generator = None
 
-# Initialize text-to-speech engine
-engine = pyttsx3.init()
-engine.setProperty("rate", 160)  # Adjust speech rate
-voices = engine.getProperty("voices")
-# Select  male voice
-male_voice = next((voice for voice in voices if "male" in voice.name.lower()), voices[0])
-engine.setProperty("voice", male_voice.id)
-
 # Lock to manage the speech engine concurrency
 engine_lock = threading.Lock()
+
+# Initialize Windows SAPI speaker
+try:
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    speaker.Rate = 1  # Speech rate (-10 to 10, default is 0)
+    speaker.Volume = 100  # Volume (0 to 100)
+    print("Using Windows SAPI for text-to-speech")
+    USE_WIN32 = True
+except Exception as e:
+    print(f"Could not initialize Windows SAPI: {e}")
+    print("Falling back to pyttsx3")
+    USE_WIN32 = False
+    VOICE_ID = None
+    try:
+        temp_engine = pyttsx3.init('sapi5')
+        voices = temp_engine.getProperty("voices")
+        male_voice = next((voice for voice in voices if "david" in voice.name.lower()), voices[0])
+        VOICE_ID = male_voice.id
+        print(f"Using voice: {male_voice.name}")
+        del temp_engine
+    except Exception as e:
+        print(f"Error getting voice: {e}")
+        VOICE_ID = None
 
 # Define paths to the beep sound files
 START_BEEP_PATH = r'c:\Users\TS PDA\Documents\Projects\Python\Voice Assistant\sounds1\point-smooth-beep-230573.wav'
@@ -69,9 +85,31 @@ def play_beep(start=True):
 
 # Function to convert text to speech
 def speak(text):
+    print(f"[SPEAK] Attempting to speak: {text[:50]}...")  # Debug output
     with engine_lock:  # Ensure only one thread accesses the engine at a time
-        engine.say(text)
-        engine.runAndWait()
+        try:
+            if USE_WIN32:
+                # Use Windows SAPI (more reliable)
+                # Speak synchronously (wait for completion)
+                speaker.Speak(text, 0)  # 0 = synchronous, 1 = asynchronous
+                print("[SPEAK] Speech completed (WIN32)")
+            else:
+                # Fallback to pyttsx3
+                engine = pyttsx3.init('sapi5')
+                engine.setProperty("rate", 160)
+                engine.setProperty("volume", 1.0)
+                if VOICE_ID:
+                    engine.setProperty("voice", VOICE_ID)
+
+                # Queue the text and speak
+                engine.say(text)
+                engine.runAndWait()
+                engine.stop()
+                print("[SPEAK] Speech completed (pyttsx3)")
+        except Exception as e:
+            print(f"[SPEAK ERROR] {e}")
+            import traceback
+            traceback.print_exc()
 
 # Function to recognize speech
 def listen():
