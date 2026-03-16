@@ -1,0 +1,39 @@
+# Voice Assistant Default Configuration
+# These values are used when environment variables are not set.
+
+assistant:
+  name: "Miehab"
+  greeting: "Hi, I'm Miehab, your personal voice assistant. How can I help you today?"
+  farewell: "Goodbye! Talk to you soon!"
+
+speech:
+  listen_timeout: 8
+  phrase_time_limit: 12
+  language: "en"
+
+tts:
+  engine: "auto"  # auto | pyttsx3
+  rate: 160
+  volume: 1.0
+
+ai:
+  model: "EleutherAI/gpt-neo-125M"
+  max_length: 100
+  num_return_sequences: 1
+
+weather:
+  api_base_url: "https://api.openweathermap.org/data/2.5/weather"
+  units: "metric"
+
+wikipedia:
+  language: "en"
+  sentences: 7
+
+sounds:
+  start_beep: "sounds/start_beep.wav"
+  stop_beep: "sounds/stop_beep.wav"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+

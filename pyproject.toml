@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "voice-assistant-miehab"
+version = "1.0.0"
+description = "AI-Powered Voice Assistant with speech recognition, TTS, weather, and Wikipedia integration"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Mihretab Nigatu", email = "mtabdevt@gmail.com"},
+]
+keywords = ["voice-assistant", "speech-recognition", "tts", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "SpeechRecognition>=3.10.0",
+    "pyttsx3>=2.90",
+    "transformers>=4.36.0",
+    "torch>=2.1.0",
+    "requests>=2.31.0",
+    "wikipedia>=1.4.0",
+    "playsound3>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "PyYAML>=6.0",
+    "PyAudio>=0.2.14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "flake8>=6.1.0",
+    "mypy>=1.7.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.scripts]
+miehab = "voice_assistant.assistant:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.flake8]
+max-line-length = 120
+exclude = [".git", "__pycache__", "build", "dist"]
+
