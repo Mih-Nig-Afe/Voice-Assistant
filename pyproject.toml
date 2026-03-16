@@ -27,8 +27,7 @@ classifiers = [
 dependencies = [
     "SpeechRecognition>=3.10.0",
     "pyttsx3>=2.90",
-    "transformers>=4.36.0",
-    "torch>=2.1.0",
+    "groq>=0.4.0",
     "requests>=2.31.0",
     "wikipedia>=1.4.0",
     "playsound3>=2.0.0",
@@ -38,6 +37,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-ai = [
+    "transformers>=4.36.0",
+    "torch>=2.1.0",
+]
 dev = [
     "pytest>=7.4.0",
     "flake8>=6.1.0",

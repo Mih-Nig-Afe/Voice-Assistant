@@ -29,6 +29,8 @@ class Config:
 
     # API Keys
     OPENWEATHER_API_KEY: str = os.getenv("OPENWEATHER_API_KEY", "")
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GNEWS_API_KEY: str = os.getenv("GNEWS_API_KEY", "")
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -42,9 +44,11 @@ class Config:
     LISTEN_TIMEOUT: int = int(os.getenv("LISTEN_TIMEOUT", "8"))
     PHRASE_TIME_LIMIT: int = int(os.getenv("PHRASE_TIME_LIMIT", "12"))
 
-    # AI
-    AI_MODEL: str = os.getenv("AI_MODEL", "EleutherAI/gpt-neo-125M")
-    AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "100"))
+    # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
+    AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
+    AI_MODEL: str = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+    AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
+    AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))
 
     # Weather
     WEATHER_API_URL: str = "https://api.openweathermap.org/data/2.5/weather"
@@ -65,6 +69,14 @@ class Config:
             warnings.append(
                 "OPENWEATHER_API_KEY not set. Weather feature will be unavailable."
             )
+        if not cls.GROQ_API_KEY and cls.AI_BACKEND == "groq":
+            warnings.append(
+                "GROQ_API_KEY not set. AI will fall back to local HuggingFace model."
+            )
+        if not cls.GNEWS_API_KEY:
+            warnings.append(
+                "GNEWS_API_KEY not set. News will use Google News RSS fallback."
+            )
         if not cls.START_BEEP.exists():
             warnings.append(f"Start beep file not found: {cls.START_BEEP}")
         if not cls.STOP_BEEP.exists():
@@ -73,7 +85,12 @@ class Config:
 
     @classmethod
     def get_api_key(cls) -> Optional[str]:
-        """Return API key or None if not configured."""
+        """Return OpenWeather API key or None if not configured."""
         key = cls.OPENWEATHER_API_KEY
         return key if key and key != "your_api_key_here" else None
 
+    @classmethod
+    def get_groq_key(cls) -> Optional[str]:
+        """Return Groq API key or None if not configured."""
+        key = cls.GROQ_API_KEY
+        return key if key and key != "your_groq_api_key_here" else None

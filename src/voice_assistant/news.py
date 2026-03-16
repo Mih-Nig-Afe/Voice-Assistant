@@ -1,0 +1,104 @@
+"""
+News integration module for Voice Assistant.
+
+Fetches latest headlines using the GNews API (free, no key required for basic use)
+and NewsAPI.org as fallback.
+"""
+
+from typing import Optional
+
+import requests
+
+from voice_assistant.config import Config
+from voice_assistant.logging_config import get_logger
+
+logger = get_logger("news")
+
+# GNews free API (no key required for basic use)
+_GNEWS_BASE_URL = "https://gnews.io/api/v4"
+
+
+def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
+    """
+    Fetch top news headlines, optionally filtered by topic.
+
+    Uses GNews API (free tier: 100 requests/day, no credit card).
+
+    Args:
+        topic: Optional topic to filter news (e.g., "technology", "sports").
+        count: Number of headlines to return (max 10 on free tier).
+
+    Returns:
+        Formatted string of news headlines.
+    """
+    api_key = Config.GNEWS_API_KEY
+    if not api_key:
+        return _get_headlines_fallback(topic, count)
+
+    try:
+        if topic:
+            endpoint = f"{_GNEWS_BASE_URL}/search"
+            params = {"q": topic, "token": api_key, "max": min(count, 10), "lang": "en"}
+        else:
+            endpoint = f"{_GNEWS_BASE_URL}/top-headlines"
+            params = {"token": api_key, "max": min(count, 10), "lang": "en"}
+
+        response = requests.get(endpoint, params=params, timeout=10)
+        data = response.json()
+
+        articles = data.get("articles", [])
+        if not articles:
+            return f"No news articles found{' about ' + topic if topic else ''}."
+
+        lines = []
+        for i, article in enumerate(articles[:count], 1):
+            title = article.get("title", "No title")
+            source = article.get("source", {}).get("name", "Unknown")
+            lines.append(f"{i}. {title} — {source}")
+
+        header = f"Top news{' about ' + topic if topic else ''}:"
+        return header + "\n" + "\n".join(lines)
+
+    except requests.exceptions.Timeout:
+        logger.error("News API request timed out")
+        return "The news service is taking too long. Please try again."
+    except Exception as e:
+        logger.error("Error fetching news: %s", e)
+        return "I couldn't fetch the news right now. Please try later."
+
+
+def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
+    """
+    Fallback: Use a free RSS-based approach when no API key is set.
+
+    Uses the free Google News RSS feed (no API key needed).
+    """
+    try:
+        if topic:
+            url = f"https://news.google.com/rss/search?q={topic}&hl=en-US&gl=US&ceid=US:en"
+        else:
+            url = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        # Simple XML parsing without extra dependency
+        import re
+        titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>", response.text)
+        if not titles:
+            titles = re.findall(r"<title>(.*?)</title>", response.text)
+
+        # Skip the feed title (first item)
+        headlines = titles[1:count + 1] if len(titles) > 1 else titles[:count]
+
+        if not headlines:
+            return "No news headlines available right now."
+
+        lines = [f"{i}. {h}" for i, h in enumerate(headlines, 1)]
+        header = f"Top news{' about ' + topic if topic else ''}:"
+        return header + "\n" + "\n".join(lines)
+
+    except Exception as e:
+        logger.error("News fallback error: %s", e)
+        return "I couldn't fetch the news right now. No news API key is configured."
+

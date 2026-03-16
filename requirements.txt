@@ -4,12 +4,18 @@
 # Core dependencies
 SpeechRecognition>=3.10.0
 pyttsx3>=2.90
-transformers>=4.36.0
-torch>=2.1.0
 requests>=2.31.0
 wikipedia>=1.4.0
 playsound3>=2.0.0
 PyAudio>=0.2.14
+
+# AI Backend (Groq — free tier, primary)
+groq>=0.4.0
+
+# AI Backend (HuggingFace — local fallback, optional)
+# Uncomment if you want local AI without an API key:
+# transformers>=4.36.0
+# torch>=2.1.0
 
 # Configuration
 python-dotenv>=1.0.0
