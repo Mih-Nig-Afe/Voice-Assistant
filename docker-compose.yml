@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────
+# Voice Assistant (Miehab) — Docker Compose
+# ─────────────────────────────────────────────────────────────────────
+# Usage:
+#   docker compose up --build        (build and run)
+#   docker compose run miehab        (interactive)
+#   docker compose down              (stop)
+#
+# NOTE: Voice assistant requires microphone/speaker access.
+#   On Linux: --device /dev/snd gives audio device access
+#   On macOS: Docker cannot access host audio natively.
+#             Use the non-Docker setup (python scripts/run.py) for
+#             full audio support on macOS.
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  miehab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: miehab-assistant
+    env_file:
+      - .env
+    stdin_open: true    # Keep stdin open for voice interaction
+    tty: true           # Allocate a TTY
+    restart: unless-stopped
+
+    # Linux audio device access (uncomment on Linux hosts)
+    # devices:
+    #   - /dev/snd:/dev/snd
+
+    # Alternatively, use PulseAudio socket (Linux with PulseAudio)
+    # volumes:
+    #   - /run/user/1000/pulse:/run/user/1000/pulse
+    # environment:
+    #   - PULSE_SERVER=unix:/run/user/1000/pulse/native
+
+    volumes:
+      # Mount sounds directory for custom audio files
+      - ./sounds:/home/miehab/app/sounds:ro
+      # Mount config for easy customization
+      - ./config:/home/miehab/app/config:ro
+

@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs (not needed at runtime)
+IMPROVEMENT_PLAN.md
+IMPLEMENTATION_ROADMAP.md
+
+# Tests (not needed in production image)
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+

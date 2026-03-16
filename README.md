@@ -49,6 +49,21 @@ Miehab is an interactive AI-driven voice assistant that combines speech recognit
    python scripts/run.py
    ```
 
+### Docker Setup (Alternative)
+
+```bash
+# Build the image
+docker build -t miehab .
+
+# Run interactively (Linux — with audio device access)
+docker run --env-file .env -it --device /dev/snd miehab
+
+# Or use Docker Compose
+docker compose up --build
+```
+
+> **Note:** Docker audio passthrough works on Linux. On macOS/Windows, use the native Python setup above for full microphone/speaker support.
+
 ### Example Commands
 
 | Command | Action |
