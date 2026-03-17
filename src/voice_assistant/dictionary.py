@@ -6,8 +6,11 @@ Provides word definitions using the Free Dictionary API
 """
 
 import requests
+import time
 
+from voice_assistant.config import Config
 from voice_assistant.logging_config import get_logger
+from voice_assistant.runtime import sanitize_query
 
 logger = get_logger("dictionary")
 
@@ -27,7 +30,7 @@ def get_definition(word: str) -> str:
     Returns:
         Formatted definition string with part of speech and meanings.
     """
-    word = word.strip().lower()
+    word = sanitize_query(word.strip().lower(), max_length=48)
     if not word:
         return "Please tell me a word to define."
 
@@ -36,10 +39,19 @@ def get_definition(word: str) -> str:
         return "That doesn't seem like a valid word. Please try a single English word."
 
     try:
-        response = requests.get(f"{_DICT_API_URL}/{word}", timeout=10)
+        start = time.perf_counter()
+        response = requests.get(f"{_DICT_API_URL}/{word}", timeout=Config.HTTP_TIMEOUT)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "Dictionary API request completed in %.1fms (status=%s)",
+            elapsed_ms,
+            response.status_code,
+        )
 
         if response.status_code == 404:
-            return f"I couldn't find a definition for '{word}'. Please check the spelling."
+            return (
+                f"I couldn't find a definition for '{word}'. Please check the spelling."
+            )
 
         response.raise_for_status()
         data = response.json()
@@ -75,7 +87,9 @@ def get_definition(word: str) -> str:
     except requests.exceptions.Timeout:
         logger.error("Dictionary API request timed out for '%s'", word)
         return "The dictionary service is taking too long. Please try again."
+    except requests.exceptions.RequestException as exc:
+        logger.error("Dictionary API request failed for '%s': %s", word, exc)
+        return "Dictionary service is unavailable right now. Please try again later."
     except Exception as e:
         logger.error("Error looking up '%s': %s", word, e)
         return "I had trouble looking that up. Please try again later."
-

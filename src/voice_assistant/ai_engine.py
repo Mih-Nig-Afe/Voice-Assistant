@@ -15,6 +15,7 @@ from typing import Optional
 
 from voice_assistant.config import Config
 from voice_assistant.logging_config import get_logger
+from voice_assistant.runtime import sanitize_query
 
 logger = get_logger("ai_engine")
 
@@ -101,6 +102,10 @@ def generate_response(
     Returns:
         Generated response text, or a fallback message on failure.
     """
+    prompt = sanitize_query(prompt, max_length=500)
+    if not prompt:
+        return "I didn't catch that clearly. Please ask again."
+
     _load_backend()
 
     if _backend == "groq":
@@ -119,6 +124,9 @@ def _generate_groq(
 ) -> str:
     """Generate response via Groq API with conversation context."""
     try:
+        if _groq_client is None:
+            return "AI service is not ready yet."
+
         messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
         if history:
             messages.extend(history[-Config.AI_MAX_HISTORY :])
@@ -130,21 +138,38 @@ def _generate_groq(
             max_tokens=Config.AI_MAX_LENGTH,
             temperature=0.7,
         )
-        text = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content if response.choices else ""
+        text = (content or "").strip()
+        if not text:
+            logger.warning("Groq returned an empty response body.")
+            return "I don't have a response right now. Please try once more."
         logger.debug("Groq response (%d chars)", len(text))
         return text
     except Exception as e:
-        logger.error("Groq API error: %s", e)
+        msg = str(e).lower()
+        if "rate" in msg or "429" in msg:
+            logger.warning("Groq rate limit reached: %s", e)
+            return (
+                "I'm getting too many requests right now. Please try again in a moment."
+            )
+        if "timeout" in msg:
+            logger.error("Groq timeout: %s", e)
+            return "The AI service timed out. Please try again."
+        logger.error("Groq API error: %s", e, exc_info=True)
         return "I had trouble thinking of a response. Please try again."
 
 
 def _generate_huggingface(prompt: str) -> str:
     """Generate response via local HuggingFace model."""
     try:
+        if _hf_generator is None:
+            return "Local AI model is not loaded yet."
         response = _hf_generator(
             prompt, max_length=Config.AI_MAX_LENGTH, num_return_sequences=1
         )
-        text: str = response[0]["generated_text"].strip()
+        text: str = response[0].get("generated_text", "").strip()
+        if not text:
+            return "I couldn't generate a response just now."
         logger.debug("HuggingFace response (%d chars)", len(text))
         return text
     except Exception as e:

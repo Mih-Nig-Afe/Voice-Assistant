@@ -5,6 +5,7 @@ Sets up structured logging with configurable levels.
 """
 
 import logging
+import os
 import sys
 
 from voice_assistant.config import Config
@@ -17,8 +18,12 @@ def setup_logging() -> logging.Logger:
     Returns:
         logging.Logger: Configured root logger.
     """
-    log_format = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+    log_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
     log_level = getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO)
+
+    # Suppress common ALSA/JACK noise in Linux headless or container environments.
+    os.environ.setdefault("PYTHONWARNINGS", "ignore")
+    os.environ.setdefault("ALSA_CONFIG_PATH", "/etc/asound.conf")
 
     # Configure root logger
     logging.basicConfig(
@@ -27,10 +32,15 @@ def setup_logging() -> logging.Logger:
         handlers=[
             logging.StreamHandler(sys.stdout),
         ],
+        force=True,
     )
 
     logger = logging.getLogger("voice_assistant")
     logger.setLevel(log_level)
+
+    for noisy in ("urllib3", "wikipedia", "playsound3"):
+        logging.getLogger(noisy).setLevel(max(log_level, logging.WARNING))
+
     return logger
 
 
@@ -45,4 +55,3 @@ def get_logger(name: str) -> logging.Logger:
         logging.Logger: Named logger instance.
     """
     return logging.getLogger(f"voice_assistant.{name}")
-

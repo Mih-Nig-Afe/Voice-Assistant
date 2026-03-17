@@ -35,6 +35,10 @@ class Config:
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+    # Networking
+    HTTP_TIMEOUT: float = float(os.getenv("HTTP_TIMEOUT", "10"))
+    HTTP_CONNECT_TIMEOUT: float = float(os.getenv("HTTP_CONNECT_TIMEOUT", "5"))
+
     # TTS
     TTS_ENGINE: str = os.getenv("TTS_ENGINE", "auto")
     TTS_RATE: int = int(os.getenv("TTS_RATE", "160"))
@@ -65,18 +69,52 @@ class Config:
     # Auto-detected if not set: uses "text" when no audio device is available
     INTERACTION_MODE: str = os.getenv("INTERACTION_MODE", "auto")
 
+    # Runtime behavior
+    REQUIRE_GROQ_API_KEY: bool = (
+        os.getenv("REQUIRE_GROQ_API_KEY", "false").strip().lower() == "true"
+    )
+
     @classmethod
     def validate(cls) -> list[str]:
         """Validate configuration and return list of warnings."""
         warnings: list[str] = []
+
+        if cls.INTERACTION_MODE.lower() not in {"auto", "voice", "text"}:
+            warnings.append(
+                "INTERACTION_MODE must be one of: auto, voice, text. Falling back to auto."
+            )
+
+        if cls.HTTP_TIMEOUT <= 0:
+            warnings.append("HTTP_TIMEOUT must be > 0. Falling back to 10 seconds.")
+            cls.HTTP_TIMEOUT = 10.0
+        if cls.HTTP_CONNECT_TIMEOUT <= 0:
+            warnings.append(
+                "HTTP_CONNECT_TIMEOUT must be > 0. Falling back to 5 seconds."
+            )
+            cls.HTTP_CONNECT_TIMEOUT = 5.0
+
+        if cls.LISTEN_TIMEOUT <= 0:
+            warnings.append("LISTEN_TIMEOUT must be > 0. Falling back to 8 seconds.")
+            cls.LISTEN_TIMEOUT = 8
+        if cls.PHRASE_TIME_LIMIT <= 0:
+            warnings.append(
+                "PHRASE_TIME_LIMIT must be > 0. Falling back to 12 seconds."
+            )
+            cls.PHRASE_TIME_LIMIT = 12
+
         if not cls.OPENWEATHER_API_KEY:
             warnings.append(
                 "OPENWEATHER_API_KEY not set. Weather feature will be unavailable."
             )
         if not cls.GROQ_API_KEY and cls.AI_BACKEND == "groq":
-            warnings.append(
-                "GROQ_API_KEY not set. AI will fall back to local HuggingFace model."
-            )
+            if cls.REQUIRE_GROQ_API_KEY:
+                warnings.append(
+                    "GROQ_API_KEY is required but missing. AI conversation will be unavailable."
+                )
+            else:
+                warnings.append(
+                    "GROQ_API_KEY not set. AI will fall back to local HuggingFace model."
+                )
         if not cls.GNEWS_API_KEY:
             warnings.append(
                 "GNEWS_API_KEY not set. News will use Google News RSS fallback."

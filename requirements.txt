@@ -2,15 +2,16 @@
 # Install: pip install -r requirements.txt
 
 # Core dependencies
-SpeechRecognition>=3.10.0
-pyttsx3>=2.90
-requests>=2.31.0
+SpeechRecognition>=3.14.3
+pyttsx3>=2.99
+requests>=2.32.5
 wikipedia>=1.4.0
-playsound3>=2.0.0
+playsound3>=3.2.8
 PyAudio>=0.2.14
+psutil>=5.9.8
 
 # AI Backend (Groq — free tier, primary)
-groq>=0.4.0
+groq>=0.18.0
 
 # AI Backend (HuggingFace — local fallback, optional)
 # Uncomment if you want local AI without an API key:
@@ -18,8 +19,8 @@ groq>=0.4.0
 # torch>=2.1.0
 
 # Configuration
-python-dotenv>=1.0.0
-PyYAML>=6.0
+python-dotenv>=1.1.1
+PyYAML>=6.0.2
 
 # Development dependencies (install with: pip install -r requirements-dev.txt)
 # Or use: pip install -e ".[dev]"

@@ -25,15 +25,16 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
-    "SpeechRecognition>=3.10.0",
-    "pyttsx3>=2.90",
-    "groq>=0.4.0",
-    "requests>=2.31.0",
+    "SpeechRecognition>=3.14.3",
+    "pyttsx3>=2.99",
+    "groq>=0.18.0",
+    "requests>=2.32.5",
     "wikipedia>=1.4.0",
-    "playsound3>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "PyYAML>=6.0",
+    "playsound3>=3.2.8",
+    "python-dotenv>=1.1.1",
+    "PyYAML>=6.0.2",
     "PyAudio>=0.2.14",
+    "psutil>=5.9.8",
 ]
 
 [project.optional-dependencies]

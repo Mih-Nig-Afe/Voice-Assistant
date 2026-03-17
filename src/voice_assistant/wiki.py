@@ -9,6 +9,7 @@ import wikipedia
 
 from voice_assistant.config import Config
 from voice_assistant.logging_config import get_logger
+from voice_assistant.runtime import sanitize_query
 
 logger = get_logger("wiki")
 
@@ -26,7 +27,10 @@ def get_summary(query: str) -> str:
     if not query or not query.strip():
         return "Please specify a topic for me to search."
 
-    query = query.strip()
+    query = sanitize_query(query.strip(), max_length=100)
+    if not query:
+        return "Please provide a clearer topic to search on Wikipedia."
+
     logger.info("Searching Wikipedia for: %s", query)
 
     try:
@@ -45,6 +49,8 @@ def get_summary(query: str) -> str:
         return "I couldn't find any information on that topic. Please try rephrasing."
 
     except Exception as e:
+        if "timed out" in str(e).lower():
+            logger.error("Wikipedia request timed out for '%s'", query)
+            return "Wikipedia is taking too long to respond. Please try again."
         logger.error("Wikipedia error for '%s': %s", query, e)
         return "I encountered an issue accessing Wikipedia. Please try again later."
-

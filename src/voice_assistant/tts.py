@@ -1,11 +1,4 @@
-"""
-Text-to-Speech module for Voice Assistant.
-
-Provides cross-platform TTS with automatic engine selection:
-- Windows: SAPI via win32com (if available)
-- All platforms: pyttsx3 fallback
-- Headless/Docker: print-only mode (no audio hardware needed)
-"""
+"""Text-to-speech output module with thread-safe engine lifecycle."""
 
 import sys
 import threading
@@ -13,6 +6,7 @@ from typing import Optional
 
 from voice_assistant.config import Config
 from voice_assistant.logging_config import get_logger
+from voice_assistant.runtime import choose_interaction_mode
 
 logger = get_logger("tts")
 
@@ -23,25 +17,12 @@ _engine_lock = threading.Lock()
 _tts_backend: str = "print"  # "win32" | "pyttsx3" | "print"
 _speaker: Optional[object] = None
 _voice_id: Optional[str] = None
+_pyttsx3_engine: Optional[object] = None
 
 
 def _is_text_mode() -> bool:
     """Check if we should use text-only mode (no audio)."""
-    mode = Config.INTERACTION_MODE.lower()
-    if mode == "text":
-        return True
-    if mode == "voice":
-        return False
-    # auto — detect audio availability
-    try:
-        import pyaudio
-
-        pa = pyaudio.PyAudio()
-        count = pa.get_device_count()
-        pa.terminate()
-        return count == 0
-    except Exception:
-        return True
+    return choose_interaction_mode() == "text"
 
 
 def initialize_tts() -> None:
@@ -50,7 +31,7 @@ def initialize_tts() -> None:
 
     Order: Windows SAPI → pyttsx3 → print-only fallback.
     """
-    global _tts_backend, _speaker, _voice_id
+    global _tts_backend, _speaker, _voice_id, _pyttsx3_engine
 
     if _is_text_mode():
         _tts_backend = "print"
@@ -76,8 +57,8 @@ def initialize_tts() -> None:
         import pyttsx3
 
         driver = "sapi5" if sys.platform == "win32" else None
-        temp_engine = pyttsx3.init(driver)
-        voices = temp_engine.getProperty("voices")
+        _pyttsx3_engine = pyttsx3.init(driver)
+        voices = _pyttsx3_engine.getProperty("voices")
         if voices:
             male_voice = next(
                 (v for v in voices if "david" in v.name.lower()),
@@ -85,8 +66,9 @@ def initialize_tts() -> None:
             )
             _voice_id = male_voice.id
             logger.info("TTS voice selected: %s", male_voice.name)
-        temp_engine.stop()
-        del temp_engine
+            _pyttsx3_engine.setProperty("voice", _voice_id)
+        _pyttsx3_engine.setProperty("rate", Config.TTS_RATE)
+        _pyttsx3_engine.setProperty("volume", Config.TTS_VOLUME)
         _tts_backend = "pyttsx3"
         logger.info("TTS initialized: pyttsx3")
         return
@@ -106,7 +88,7 @@ def speak(text: str) -> None:
         text: The text to speak/display.
     """
     if _tts_backend == "print":
-        print(f"🤖 Miehab: {text}")
+        print(f"Miehab: {text}")
         return
 
     logger.debug("Speaking: %s", text[:80])
@@ -119,20 +101,29 @@ def speak(text: str) -> None:
                 _speak_pyttsx3(text)
         except Exception as e:
             logger.warning("TTS engine failed, falling back to print: %s", e)
-            print(f"🤖 Miehab: {text}")
+            print(f"Miehab: {text}")
 
 
 def _speak_pyttsx3(text: str) -> None:
     """Speak text using pyttsx3 engine."""
-    import pyttsx3
-
-    driver = "sapi5" if sys.platform == "win32" else None
-    engine = pyttsx3.init(driver)
-    engine.setProperty("rate", Config.TTS_RATE)
-    engine.setProperty("volume", Config.TTS_VOLUME)
-    if _voice_id:
-        engine.setProperty("voice", _voice_id)
-    engine.say(text)
-    engine.runAndWait()
-    engine.stop()
+    if _pyttsx3_engine is None:
+        initialize_tts()
+    if _pyttsx3_engine is None:
+        print(f"Miehab: {text}")
+        return
+    _pyttsx3_engine.say(text)
+    _pyttsx3_engine.runAndWait()
     logger.debug("Speech completed (pyttsx3)")
+
+
+def shutdown_tts() -> None:
+    """Release TTS resources during graceful shutdown."""
+    global _pyttsx3_engine, _speaker
+    with _engine_lock:
+        if _pyttsx3_engine is not None:
+            try:
+                _pyttsx3_engine.stop()
+            except Exception:
+                pass
+            _pyttsx3_engine = None
+        _speaker = None

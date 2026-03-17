@@ -7,20 +7,37 @@
 
 FROM python:3.12-slim
 
+ARG ENABLE_AUDIO=false
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash miehab
 WORKDIR /home/miehab/app
 
-# Install Python dependencies (no audio packages needed — text mode)
+# Install base system packages
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && if [ "$ENABLE_AUDIO" = "true" ]; then \
+    apt-get install -y --no-install-recommends portaudio19-dev espeak-ng; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for text mode by default.
+# A separate voice-capable variant can be built with: --build-arg ENABLE_AUDIO=true
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
-    groq>=0.4.0 \
-    SpeechRecognition>=3.10.0 \
-    requests>=2.31.0 \
+    groq>=0.18.0 \
+    SpeechRecognition>=3.14.3 \
+    requests>=2.32.5 \
     wikipedia>=1.4.0 \
-    python-dotenv>=1.0.0 \
-    PyYAML>=6.0
+    python-dotenv>=1.1.1 \
+    PyYAML>=6.0.2 \
+    pyttsx3>=2.99 \
+    playsound3>=3.2.8 \
+    psutil>=5.9.8 \
+    && if [ "$ENABLE_AUDIO" = "true" ]; then pip install --no-cache-dir PyAudio>=0.2.14; fi
 
 # Copy source code
 COPY src/ src/

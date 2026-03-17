@@ -10,6 +10,7 @@ Includes graceful shutdown via signal handlers and conversation memory.
 
 import signal
 import sys
+from contextlib import suppress
 
 from voice_assistant import commands
 from voice_assistant.ai_engine import generate_response
@@ -25,13 +26,19 @@ from voice_assistant.dictionary import get_definition
 from voice_assistant.jokes import get_joke
 from voice_assistant.logging_config import get_logger, setup_logging
 from voice_assistant.news import get_top_headlines
-from voice_assistant.speech import listen
+from voice_assistant.runtime import close_http_session
+from voice_assistant.speech import (
+    initialize_input,
+    is_text_mode,
+    listen,
+    shutdown_input,
+)
 from voice_assistant.system_info import (
     get_battery_status,
     get_platform_summary,
     get_system_info,
 )
-from voice_assistant.tts import initialize_tts, speak
+from voice_assistant.tts import initialize_tts, shutdown_tts, speak
 from voice_assistant.weather import get_weather
 from voice_assistant.wiki import get_summary
 
@@ -88,7 +95,7 @@ def _cmd_wikipedia(user_input: str) -> str:
 
 
 @commands.register(
-    ["news", "headlines", "latest news", "what's happening"],
+    ["latest news", "what's happening", "headlines", "news"],
     "Get latest news headlines",
 )
 def _cmd_news(user_input: str) -> str:
@@ -242,6 +249,7 @@ def run() -> None:
 
     # Startup
     setup_logging()
+    mode = initialize_input()
     initialize_tts()
 
     # Register signal handlers for graceful shutdown
@@ -253,6 +261,14 @@ def run() -> None:
     for warning in warnings:
         logger.warning(warning)
 
+    logger.info("Assistant startup complete (interaction_mode=%s)", mode)
+    if mode == "voice":
+        logger.info(
+            "Voice mode active. If this is first run, grant microphone permission when prompted by your OS."
+        )
+    elif is_text_mode():
+        logger.info("Text mode active. Waiting for keyboard input from stdin.")
+
     name = Config.ASSISTANT_NAME
     greeting = (
         f"Hi, I'm {name}, your personal voice assistant. How can I help you today?"
@@ -261,7 +277,11 @@ def run() -> None:
     speak(greeting)
 
     while _running:
-        user_query = listen()
+        try:
+            user_query = listen()
+        except KeyboardInterrupt:
+            logger.info("Input interrupted by user; preparing shutdown.")
+            break
 
         if not user_query or not _running:
             continue
@@ -273,7 +293,13 @@ def run() -> None:
         handler, keyword = commands.route(user_query)
 
         if handler is not None:
-            response = handler(user_query)
+            try:
+                response = handler(user_query)
+            except Exception as exc:
+                logger.error(
+                    "Command handler failed for '%s': %s", keyword, exc, exc_info=True
+                )
+                response = "I hit an internal error while handling that command."
             if response == "__EXIT__":
                 farewell = "Goodbye! Talk to you soon!"
                 logger.info(farewell)
@@ -295,6 +321,18 @@ def run() -> None:
         if _running:
             speak("Do you need help with anything else?")
 
+    logger.info("Assistant shutting down...")
+    shutdown()
+
+
+def shutdown() -> None:
+    """Cleanly release application resources."""
+    with suppress(Exception):
+        shutdown_input()
+    with suppress(Exception):
+        shutdown_tts()
+    with suppress(Exception):
+        close_http_session()
     logger.info("Assistant shut down cleanly.")
 
 
@@ -304,9 +342,12 @@ def main() -> None:
         run()
     except KeyboardInterrupt:
         logger.info("Assistant interrupted by user.")
-        speak("Goodbye!")
+        with suppress(Exception):
+            speak("Goodbye!")
+        shutdown()
     except Exception as e:
         logger.critical("Unexpected error: %s", e, exc_info=True)
+        shutdown()
         raise
 
 

@@ -18,10 +18,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        ENABLE_AUDIO: "false"
     container_name: miehab-assistant
     env_file:
       - .env
-    stdin_open: true    # Keep stdin open for voice interaction
+    stdin_open: true    # Keep stdin open for interactive text mode
     tty: true           # Allocate a TTY
     restart: unless-stopped
 
