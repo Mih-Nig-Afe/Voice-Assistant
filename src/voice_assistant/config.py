@@ -61,6 +61,10 @@ class Config:
     # Assistant
     ASSISTANT_NAME: str = os.getenv("ASSISTANT_NAME", "Miehab")
 
+    # Interaction mode: voice (mic+speaker), text (stdin/stdout)
+    # Auto-detected if not set: uses "text" when no audio device is available
+    INTERACTION_MODE: str = os.getenv("INTERACTION_MODE", "auto")
+
     @classmethod
     def validate(cls) -> list[str]:
         """Validate configuration and return list of warnings."""
