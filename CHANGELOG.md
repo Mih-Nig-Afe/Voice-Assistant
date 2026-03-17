@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.3] - 2026-03-17
+
+### Security
+
+- Hardened `.gitignore` to ignore `.env.*` and common key/certificate artifacts while keeping `.env.example` tracked.
+- Hardened `.dockerignore` to exclude secret files from Docker build context.
+- Added `SECURITY.md` with public-repo secret management policy and incident response steps.
+
+### Docs
+
+- Added README security section linking to `SECURITY.md`.
+
 ## [1.1.2] - 2026-03-17
 
 ### Fixed

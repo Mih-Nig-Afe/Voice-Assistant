@@ -113,6 +113,15 @@ If you still get text mode locally:
 
 See [CHANGELOG.md](CHANGELOG.md) for upgrade notes, fixes, and release history.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for secret handling policy, rotation steps, and public-repo hygiene.
+
+Quick rules:
+- Keep real keys only in local `.env` and CI secret stores.
+- Never commit `.env` or certificate/private key files.
+- Rotate keys immediately if exposure is suspected.
+
 ## Documentation Policy
 
 - Every behavior change or operational fix must update both README and CHANGELOG.
