@@ -23,9 +23,13 @@ services:
     container_name: miehab-assistant
     env_file:
       - .env
+    environment:
+      # Compose sessions are text-mode by default; local host run is used for voice mode.
+      INTERACTION_MODE: text
+      FAIL_IF_VOICE_UNAVAILABLE: "false"
     stdin_open: true    # Keep stdin open for interactive text mode
     tty: true           # Allocate a TTY
-    restart: unless-stopped
+    restart: on-failure:3
 
     # Linux audio device access (uncomment on Linux hosts)
     # devices:

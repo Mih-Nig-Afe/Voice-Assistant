@@ -70,6 +70,8 @@ docker compose run --rm miehab
 
 # Docker Compose service mode (logs/daemon style, not ideal for live typing)
 docker compose up --build
+
+# Note: docker-compose.yml forces INTERACTION_MODE=text to prevent voice-mode startup failures in containers.
 ```
 
 > **Note:** Docker audio passthrough works on Linux. On macOS/Windows, use the native Python setup above for full microphone/speaker support.
@@ -106,6 +108,7 @@ If you still get text mode locally:
 - Use piped input for scripted tests: `printf "help\nbye\n" | docker run --rm -i --env-file .env miehab`.
 - Avoid relying on `docker compose up` for manual conversation input.
 - On macOS/Windows, Docker sessions are text-first; voice mode should be run on the host machine.
+- Docker Compose now overrides `INTERACTION_MODE=text` even if your local `.env` uses `INTERACTION_MODE=voice`.
 
 ---
 
