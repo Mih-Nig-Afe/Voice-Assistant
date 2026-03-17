@@ -65,7 +65,10 @@ printf "help\njoke\nwhat time\nbye\n" | docker run --env-file .env --rm -i mieha
 docker build --build-arg ENABLE_AUDIO=true -t miehab-voice .
 docker run --env-file .env -it --device /dev/snd -e INTERACTION_MODE=voice miehab-voice
 
-# Or use Docker Compose
+# Docker Compose interactive session (recommended for typing commands)
+docker compose run --rm miehab
+
+# Docker Compose service mode (logs/daemon style, not ideal for live typing)
 docker compose up --build
 ```
 
@@ -76,6 +79,45 @@ docker compose up --build
 - `INTERACTION_MODE=auto` (default): prefers voice mode on local machines when a microphone is detected; falls back to text mode in Docker/headless environments.
 - `INTERACTION_MODE=voice`: force microphone input and spoken output.
 - `INTERACTION_MODE=text`: force keyboard input and printed output.
+
+### Voice Mode Quick Start (Local Host)
+
+If you want real microphone input and spoken output, run outside Docker:
+
+```bash
+export INTERACTION_MODE=voice
+python scripts/run.py
+```
+
+Expected startup logs for voice mode:
+- `interaction_mode=voice`
+- `Input mode initialized: voice`
+- `TTS initialized: pyttsx3` (or platform TTS backend)
+
+If you still get text mode locally:
+- Grant microphone permission to your terminal/Python app in OS privacy settings.
+- Install/verify PyAudio in your local environment.
+- Confirm your microphone is visible to the OS.
+
+### Docker Input Troubleshooting
+
+- If you only see startup logs and no command prompt, your container likely has no interactive stdin attached.
+- Use `docker run -it ...` or `docker compose run --rm miehab` for live command typing.
+- Use piped input for scripted tests: `printf "help\nbye\n" | docker run --rm -i --env-file .env miehab`.
+- Avoid relying on `docker compose up` for manual conversation input.
+- On macOS/Windows, Docker sessions are text-first; voice mode should be run on the host machine.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for upgrade notes, fixes, and release history.
+
+## Documentation Policy
+
+- Every behavior change or operational fix must update both README and CHANGELOG.
+- Docker run-mode changes must include tested command examples.
+- New configuration keys must be reflected in `.env.example` and README configuration tables.
 
 ### Example Commands
 

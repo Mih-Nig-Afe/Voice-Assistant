@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import select
 import sys
 from typing import Optional
 
@@ -86,6 +87,15 @@ def _listen_text() -> Optional[str]:
     try:
         if sys.stdin.closed:
             raise KeyboardInterrupt
+
+        if not sys.stdin.isatty():
+            readable, _, _ = select.select([sys.stdin], [], [], 0.2)
+            if not readable:
+                logger.error(
+                    "No interactive stdin detected. Start with 'docker run -it ...' or 'docker compose run --rm miehab'."
+                )
+                raise KeyboardInterrupt
+
         user_input = input("You: ").strip()
         if user_input:
             logger.info("Text input: %s", user_input)

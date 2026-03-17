@@ -130,6 +130,17 @@ def choose_interaction_mode() -> str:
         logger.info("Auto mode selected voice input (microphone detected).")
         return "voice"
 
+    if caps.in_docker:
+        logger.warning(
+            "Auto mode selected text input because the app is running in a container. "
+            "For full voice on macOS/Windows, run locally outside Docker."
+        )
+    else:
+        logger.warning(
+            "Auto mode selected text input because no microphone was detected. "
+            "Check OS microphone permissions and ensure PyAudio is installed."
+        )
+
     logger.info(
         "Auto mode selected text input (docker=%s, microphone=%s, tty=%s).",
         caps.in_docker,

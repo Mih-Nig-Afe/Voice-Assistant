@@ -2,8 +2,8 @@
 # Voice Assistant (Miehab) — Docker Compose
 # ─────────────────────────────────────────────────────────────────────
 # Usage:
-#   docker compose up --build        (build and run)
-#   docker compose run miehab        (interactive)
+#   docker compose run --rm miehab   (interactive typing session)
+#   docker compose up --build        (service/log mode)
 #   docker compose down              (stop)
 #
 # NOTE: Voice assistant requires microphone/speaker access.

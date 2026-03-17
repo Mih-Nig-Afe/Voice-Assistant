@@ -26,7 +26,7 @@ from voice_assistant.dictionary import get_definition
 from voice_assistant.jokes import get_joke
 from voice_assistant.logging_config import get_logger, setup_logging
 from voice_assistant.news import get_top_headlines
-from voice_assistant.runtime import close_http_session
+from voice_assistant.runtime import close_http_session, detect_interaction_capabilities
 from voice_assistant.speech import (
     initialize_input,
     is_text_mode,
@@ -95,7 +95,7 @@ def _cmd_wikipedia(user_input: str) -> str:
 
 
 @commands.register(
-    ["latest news", "what's happening", "headlines", "news"],
+    ["latest news", "what's happening", "headlines", "news", "headlines"],
     "Get latest news headlines",
 )
 def _cmd_news(user_input: str) -> str:
@@ -267,7 +267,19 @@ def run() -> None:
             "Voice mode active. If this is first run, grant microphone permission when prompted by your OS."
         )
     elif is_text_mode():
+        caps = detect_interaction_capabilities()
         logger.info("Text mode active. Waiting for keyboard input from stdin.")
+        if caps.in_docker:
+            logger.warning(
+                "Running in Docker text mode: microphone capture and speaker playback are disabled in this session."
+            )
+            logger.warning(
+                "Use local host execution for full voice mode: python scripts/run.py"
+            )
+        if not caps.has_tty_stdin:
+            logger.warning(
+                "No interactive TTY detected. For live typing use 'docker run -it ...' or 'docker compose run --rm miehab'."
+            )
 
     name = Config.ASSISTANT_NAME
     greeting = (
