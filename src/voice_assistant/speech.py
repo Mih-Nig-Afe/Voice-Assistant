@@ -24,8 +24,14 @@ def initialize_input() -> str:
     if _mode is not None:
         return _mode
 
+    requested_mode = Config.INTERACTION_MODE.strip().lower()
     _mode = choose_interaction_mode()
     if _mode == "text":
+        if requested_mode == "voice" and Config.FAIL_IF_VOICE_UNAVAILABLE:
+            raise RuntimeError(
+                "Voice mode was explicitly requested but no microphone is available in this runtime. "
+                "Run on host OS for voice, or set INTERACTION_MODE=text for Docker sessions."
+            )
         logger.info("Input mode initialized: text")
         return _mode
 

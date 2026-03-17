@@ -285,6 +285,11 @@ def run() -> None:
             logger.warning(
                 "Use local host execution for full voice mode: python scripts/run.py"
             )
+            if not caps.has_tty_stdin:
+                raise RuntimeError(
+                    "Non-interactive Docker text session detected. "
+                    "Use `docker run -it ...` or `docker compose run --rm miehab` for keyboard input."
+                )
         if not caps.has_tty_stdin:
             logger.warning(
                 "No interactive TTY detected. For live typing use 'docker run -it ...' or 'docker compose run --rm miehab'."

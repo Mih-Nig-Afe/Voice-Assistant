@@ -73,6 +73,9 @@ class Config:
     REQUIRE_GROQ_API_KEY: bool = (
         os.getenv("REQUIRE_GROQ_API_KEY", "false").strip().lower() == "true"
     )
+    FAIL_IF_VOICE_UNAVAILABLE: bool = (
+        os.getenv("FAIL_IF_VOICE_UNAVAILABLE", "true").strip().lower() == "true"
+    )
 
     _PLACEHOLDER_MARKERS: tuple[str, ...] = (
         "your_",
