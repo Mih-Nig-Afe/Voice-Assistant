@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Miehab Voice Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Voice Assistant Console</p>
+          <h1>Miehab</h1>
+        </div>
+        <div class="status-pill" id="assistant-state">Idle</div>
+      </header>
+
+      <section class="orb-section">
+        <div class="orb-wrap" id="orb-wrap">
+          <div class="orb" id="assistant-orb"></div>
+        </div>
+        <p class="orb-hint" id="orb-hint">Tap the mic and speak naturally.</p>
+      </section>
+
+      <section class="chat-panel">
+        <div class="messages" id="messages"></div>
+
+        <div class="controls">
+          <div class="input-row">
+            <input
+              id="chat-input"
+              type="text"
+              placeholder="Ask about weather, news, a joke, or anything else..."
+              autocomplete="off"
+            />
+            <button id="send-btn" class="btn btn-primary">Send</button>
+          </div>
+
+          <div class="action-row">
+            <button id="mic-btn" class="btn btn-accent">Start Listening</button>
+            <button id="voice-btn" class="btn btn-muted">Voice Replies: On</button>
+            <button id="clear-btn" class="btn btn-muted">Clear Chat</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

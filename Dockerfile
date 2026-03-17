@@ -34,6 +34,8 @@ RUN pip install --no-cache-dir --upgrade pip \
     wikipedia>=1.4.0 \
     python-dotenv>=1.1.1 \
     PyYAML>=6.0.2 \
+    fastapi>=0.116.1 \
+    uvicorn>=0.35.0 \
     pyttsx3>=2.99 \
     playsound3>=3.2.8 \
     psutil>=5.9.8 \

@@ -68,10 +68,13 @@ docker run --env-file .env -it --device /dev/snd -e INTERACTION_MODE=voice mieha
 # Docker Compose interactive session (recommended for typing commands)
 docker compose run --rm miehab
 
-# Docker Compose service mode (logs/daemon style, not ideal for live typing)
+# Docker Compose service mode (starts the web frontend)
 docker compose up --build
 
-# Note: docker-compose.yml forces INTERACTION_MODE=text to prevent voice-mode startup failures in containers.
+# Open the web UI
+http://127.0.0.1:8000
+
+# Note: docker-compose.yml now starts scripts/run_web.py by default.
 ```
 
 > **Note:** Docker audio passthrough works on Linux. On macOS/Windows, use the native Python setup above for full microphone/speaker support.
@@ -101,14 +104,45 @@ If you still get text mode locally:
 - Install/verify PyAudio in your local environment.
 - Confirm your microphone is visible to the OS.
 
+## Web Frontend (Beautiful Voice Console)
+
+The project now includes a modern browser frontend to operate Miehab visually with:
+
+- Live chat panel for text interaction
+- Browser microphone input via Web Speech API
+- Spoken assistant replies via browser speech synthesis
+- Dynamic glowing assistant orb with listening/speaking motion effects
+
+### Run the Web UI
+
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Start the web server:
+   ```bash
+   python scripts/run_web.py
+   ```
+
+3. Open in your browser:
+   ```
+   http://127.0.0.1:8000
+   ```
+
+### Voice Notes for Web Mode
+
+- Microphone capture uses browser support (`SpeechRecognition` / `webkitSpeechRecognition`).
+- Spoken replies use browser `speechSynthesis` voices.
+- For best voice support, use current Chrome or Edge.
+- If mic permission is blocked, you can still use full text chat.
+
 ### Docker Input Troubleshooting
 
-- If you only see startup logs and no command prompt, your container likely has no interactive stdin attached.
-- Use `docker run -it ...` or `docker compose run --rm miehab` for live command typing.
-- Use piped input for scripted tests: `printf "help\nbye\n" | docker run --rm -i --env-file .env miehab`.
-- Avoid relying on `docker compose up` for manual conversation input.
-- On macOS/Windows, Docker sessions are text-first; voice mode should be run on the host machine.
-- Docker Compose now overrides `INTERACTION_MODE=text` even if your local `.env` uses `INTERACTION_MODE=voice`.
+- If you only see startup logs, wait for Uvicorn startup then open `http://127.0.0.1:8000`.
+- `docker compose up --build` now runs the web UI server, not the terminal chat loop.
+- Use `docker compose run --rm miehab python scripts/run.py` only when you specifically want terminal text mode.
+- On macOS/Windows, browser voice features depend on browser mic permissions (Chrome/Edge recommended).
 
 ---
 

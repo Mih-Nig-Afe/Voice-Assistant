@@ -24,9 +24,12 @@ services:
     env_file:
       - .env
     environment:
-      # Compose sessions are text-mode by default; local host run is used for voice mode.
-      INTERACTION_MODE: text
+      # Web mode in container; browser handles microphone + speech synthesis.
+      INTERACTION_MODE: auto
       FAIL_IF_VOICE_UNAVAILABLE: "false"
+    entrypoint: ["python", "scripts/run_web.py"]
+    ports:
+      - "8000:8000"
     stdin_open: true    # Keep stdin open for interactive text mode
     tty: true           # Allocate a TTY
     restart: on-failure:3

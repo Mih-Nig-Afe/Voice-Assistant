@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.1] - 2026-03-17
+
+### Fixed
+
+- Updated Docker Compose to start the web frontend server (`scripts/run_web.py`) instead of terminal mode.
+- Exposed port `8000` in Compose for browser access.
+
+### Docs
+
+- Updated Docker instructions to reflect web-first Compose startup and browser URL.
+
+## [1.2.0] - 2026-03-17
+
+### Added
+
+- Introduced a new FastAPI-powered web frontend backend at `scripts/run_web.py`.
+- Added browser UI with a modern chat console and animated glowing assistant orb.
+- Implemented browser speech recognition for voice input and speech synthesis for spoken replies.
+- Added `/api/chat` and `/api/health` endpoints for frontend interaction and diagnostics.
+
+### Changed
+
+- Added `fastapi` and `uvicorn` to project dependencies and package scripts (`miehab-web`).
+- Added web query processing pipeline with command handling and AI fallback in `voice_assistant.web`.
+
+### Tested
+
+- Added unit tests for key web query behaviors (help, exit, empty input).
+
 ## [1.1.3] - 2026-03-17
 
 ### Security
