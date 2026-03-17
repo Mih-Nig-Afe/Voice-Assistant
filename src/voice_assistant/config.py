@@ -74,6 +74,39 @@ class Config:
         os.getenv("REQUIRE_GROQ_API_KEY", "false").strip().lower() == "true"
     )
 
+    _PLACEHOLDER_MARKERS: tuple[str, ...] = (
+        "your_",
+        "rotate_me",
+        "replace_me",
+        "changeme",
+        "paste_new",
+        "example",
+    )
+
+    @classmethod
+    def _is_valid_secret(cls, value: str) -> bool:
+        """Return True when a secret looks configured and not placeholder text."""
+        if not value:
+            return False
+        clean = value.strip()
+        if not clean:
+            return False
+        lower = clean.lower()
+        if any(marker in lower for marker in cls._PLACEHOLDER_MARKERS):
+            return False
+        return True
+
+    @classmethod
+    def validate_required_secrets(cls) -> list[str]:
+        """Return blocking configuration errors for required secrets."""
+        errors: list[str] = []
+        groq_required = cls.AI_BACKEND == "groq" or cls.REQUIRE_GROQ_API_KEY
+        if groq_required and not cls._is_valid_secret(cls.GROQ_API_KEY):
+            errors.append(
+                "GROQ_API_KEY is required but missing/placeholder. Rotate and set a real key in .env."
+            )
+        return errors
+
     @classmethod
     def validate(cls) -> list[str]:
         """Validate configuration and return list of warnings."""
@@ -102,11 +135,11 @@ class Config:
             )
             cls.PHRASE_TIME_LIMIT = 12
 
-        if not cls.OPENWEATHER_API_KEY:
+        if not cls._is_valid_secret(cls.OPENWEATHER_API_KEY):
             warnings.append(
                 "OPENWEATHER_API_KEY not set. Weather feature will be unavailable."
             )
-        if not cls.GROQ_API_KEY and cls.AI_BACKEND == "groq":
+        if not cls._is_valid_secret(cls.GROQ_API_KEY) and cls.AI_BACKEND == "groq":
             if cls.REQUIRE_GROQ_API_KEY:
                 warnings.append(
                     "GROQ_API_KEY is required but missing. AI conversation will be unavailable."
@@ -115,7 +148,7 @@ class Config:
                 warnings.append(
                     "GROQ_API_KEY not set. AI will fall back to local HuggingFace model."
                 )
-        if not cls.GNEWS_API_KEY:
+        if not cls._is_valid_secret(cls.GNEWS_API_KEY):
             warnings.append(
                 "GNEWS_API_KEY not set. News will use Google News RSS fallback."
             )
@@ -129,10 +162,10 @@ class Config:
     def get_api_key(cls) -> Optional[str]:
         """Return OpenWeather API key or None if not configured."""
         key = cls.OPENWEATHER_API_KEY
-        return key if key and key != "your_api_key_here" else None
+        return key if cls._is_valid_secret(key) else None
 
     @classmethod
     def get_groq_key(cls) -> Optional[str]:
         """Return Groq API key or None if not configured."""
         key = cls.GROQ_API_KEY
-        return key if key and key != "your_groq_api_key_here" else None
+        return key if cls._is_valid_secret(key) else None

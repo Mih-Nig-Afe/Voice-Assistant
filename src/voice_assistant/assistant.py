@@ -261,6 +261,15 @@ def run() -> None:
     for warning in warnings:
         logger.warning(warning)
 
+    blocking_errors = Config.validate_required_secrets()
+    if blocking_errors:
+        for err in blocking_errors:
+            logger.error(err)
+        raise RuntimeError(
+            "Startup blocked due to invalid required secrets in .env. "
+            "Rotate keys and set real values before running."
+        )
+
     logger.info("Assistant startup complete (interaction_mode=%s)", mode)
     if mode == "voice":
         logger.info(
