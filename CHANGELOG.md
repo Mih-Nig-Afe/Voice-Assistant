@@ -2,6 +2,61 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.6] - 2026-03-17
+
+### Fixed
+
+- Removed strict frontend secure-context pre-block that could prevent valid browser speech attempts.
+- Added direct speech-start fallback when microphone preflight APIs are unavailable or unreliable.
+- Improved permission messaging so "granted" appears only after a successful `getUserMedia` request.
+- Added clearer startup-failure guidance when voice capture cannot start in the browser.
+
+## [1.2.5] - 2026-03-17
+
+### Fixed
+
+- Fixed weather-intent parsing for phrases like "what is weather in addis ababa today".
+- Prevented city-only follow-ups (for example "addis") from being misrouted to calculator intent.
+- Added defensive frontend event-binding guards so UI controls remain responsive even with partial/stale DOM.
+
+### Tested
+
+- Added regression test coverage for city follow-up routing with "addis" in pending-weather flow.
+
+## [1.2.4] - 2026-03-17
+
+### Fixed
+
+- Added explicit `Request Mic Access` button in the web UI to trigger microphone permission requests on demand.
+- Improved microphone permission handling to avoid false hard-block behavior on browsers with inconsistent permission-state reporting.
+- Improved weather city extraction to ignore trailing time/filler words (for example `today`, `now`) in natural phrases.
+
+### Tested
+
+- Added web test coverage for weather phrase parsing with trailing `today`.
+
+## [1.2.3] - 2026-03-17
+
+### Fixed
+
+- Improved web speech permission flow to request microphone access more safely and allow retry without hard lockout.
+- Added browser-permission checks and cooldown-based retry behavior for repeated speech `network` errors.
+- Improved weather intent parsing for natural phrasing such as "tell me weather of hawassa".
+- Added follow-up weather handling so a city-only reply (for example "hawassa") is understood after a weather prompt.
+
+### Tested
+
+- Added/updated unit tests for weather phrase extraction and follow-up city handling in web mode.
+
+## [1.2.2] - 2026-03-17
+
+### Fixed
+
+- Improved browser speech-recognition resilience in the web frontend.
+- Added microphone permission preflight before starting speech capture.
+- Added network-error throttling and auto-pause after repeated `network` failures to prevent error spam loops.
+- Added clearer user guidance in-UI for permission/network recovery while preserving text chat fallback.
+
 ## [1.2.1] - 2026-03-17
 
 ### Fixed

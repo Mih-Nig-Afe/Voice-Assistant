@@ -6,6 +6,7 @@ assistant with typed or spoken input.
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import re
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -36,6 +37,8 @@ _FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
 app = FastAPI(title="Miehab Web Assistant", version="1.0.0")
 app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
+_pending_weather_city: bool = False
+
 
 class ChatRequest(BaseModel):
     """Incoming chat message payload."""
@@ -57,8 +60,62 @@ def _strip_phrases(text: str, phrases: list[str]) -> str:
     return lowered.strip()
 
 
+def _contains_any_phrase(text: str, phrases: list[str]) -> bool:
+    """Check if any phrase appears in text (case-insensitive)."""
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _contains_any_word(text: str, words: list[str]) -> bool:
+    """Check if any word appears as a full token in text."""
+    return any(
+        re.search(rf"\b{re.escape(word)}\b", text, flags=re.IGNORECASE)
+        for word in words
+    )
+
+
+def _extract_weather_city(text: str) -> str:
+    """Extract likely city name from natural weather phrasing."""
+    query = text.lower().strip()
+    query = re.sub(r"^(hey|hi|hello)\s+", "", query)
+
+    patterns = [
+        r"(?:what(?:'s| is)\s+the\s+)?(?:weather|temperature)(?:\s+like)?\s+(?:in|for|of)\s+(.+)$",
+        r"(?:tell me|show me|give me|check)\s+(?:the\s+)?(?:weather|temperature)\s+(?:in|for|of)\s+(.+)$",
+        r"(?:weather|temperature)\s+(?:in|for|of)\s+(.+)$",
+        r"(?:weather|temperature)\s+(.+)$",
+        r"(.+)\s+(?:weather|temperature)$",
+    ]
+
+    city = ""
+    for pattern in patterns:
+        match = re.search(pattern, query)
+        if match:
+            city = match.group(1).strip()
+            break
+
+    if not city:
+        return ""
+
+    city = re.sub(
+        r"^(please|kindly|the|a|an|city of|city)\s+",
+        "",
+        city,
+    )
+    city = re.sub(r"^(is\s+)?(in|for|of)\s+", "", city)
+    city = re.sub(
+        r"\s+(today|now|right now|currently|please|for today|at the moment)$",
+        "",
+        city,
+    )
+    city = re.sub(r"[^a-zA-Z\s\-\.' ]", "", city).strip()
+    return city
+
+
 def process_user_query(user_input: str) -> ChatResponse:
     """Process one user message and return assistant output for web mode."""
+    global _pending_weather_city
+
     query = (user_input or "").strip()
     if not query:
         return ChatResponse(response="Please say or type something so I can help.")
@@ -67,25 +124,42 @@ def process_user_query(user_input: str) -> ChatResponse:
     memory.add_user_message(query)
 
     if any(word in normalized for word in ["bye", "goodbye", "exit", "quit", "stop"]):
+        _pending_weather_city = False
         response = "Goodbye! Talk to you soon!"
         memory.add_assistant_message(response)
         return ChatResponse(response=response, should_exit=True)
 
-    if "weather" in normalized or "temperature" in normalized:
-        city = _strip_phrases(
-            normalized,
-            [
-                "what's the weather in",
-                "what is the weather in",
-                "weather in",
-                "temperature in",
-                "weather",
-                "temperature",
-            ],
-        )
+    if _pending_weather_city and not any(
+        token in normalized
+        for token in [
+            "weather",
+            "temperature",
+            "news",
+            "wikipedia",
+            "joke",
+            "define",
+            "calculate",
+            "time",
+            "date",
+            "battery",
+            "system",
+            "help",
+        ]
+    ):
+        _pending_weather_city = False
+        response = get_weather(query)
+        memory.add_assistant_message(response)
+        return ChatResponse(response=response)
+
+    if _contains_any_word(normalized, ["weather", "temperature"]):
+        city = _extract_weather_city(query)
         if not city:
-            response = "Tell me the city, for example: weather in Addis Ababa."
+            _pending_weather_city = True
+            response = (
+                "Sure, which city should I check? For example: Hawassa or Addis Ababa."
+            )
         else:
+            _pending_weather_city = False
             response = get_weather(city)
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
@@ -158,19 +232,18 @@ def process_user_query(user_input: str) -> ChatResponse:
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
-    if any(
-        p in normalized
-        for p in [
+    if _contains_any_phrase(normalized, ["divided by"]) or _contains_any_word(
+        normalized,
+        [
             "calculate",
             "math",
             "plus",
             "minus",
             "times",
-            "divided by",
             "multiply",
             "add",
             "subtract",
-        ]
+        ],
     ):
         expression = _strip_phrases(
             normalized, ["calculate", "what is", "what's", "compute", "solve", "math"]
@@ -212,6 +285,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         return ChatResponse(response=response)
 
     if any(p in normalized for p in ["clear history", "forget", "reset conversation"]):
+        _pending_weather_city = False
         memory.clear()
         response = "I cleared our conversation history."
         memory.add_assistant_message(response)
