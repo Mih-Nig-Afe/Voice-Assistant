@@ -77,6 +77,62 @@ class TestGetTopHeadlines:
         assert mock_get.call_count == 2
 
     @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_topic_results_rank_and_filter_by_relevance(self, mock_get, mock_config):
+        mock_config.GNEWS_API_KEY = "test_key"
+        topic_response = MagicMock()
+        topic_response.status_code = 200
+        topic_response.json.return_value = {
+            "articles": [
+                {
+                    "title": "LPG surcharge debate in restaurants",
+                    "description": "Local story",
+                    "source": {"name": "Example A"},
+                },
+                {
+                    "title": "US-Israel and Iran tensions rise",
+                    "description": "Regional conflict update",
+                    "source": {"name": "Example B"},
+                },
+            ]
+        }
+        mock_get.return_value = topic_response
+
+        result = get_top_headlines(topic="iran case us and israel")
+        assert "US-Israel and Iran tensions rise" in result
+        assert "LPG surcharge debate in restaurants" not in result
+
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_topic_with_only_irrelevant_results_falls_back_to_general(
+        self, mock_get, mock_config
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        topic_irrelevant = MagicMock()
+        topic_irrelevant.status_code = 200
+        topic_irrelevant.json.return_value = {
+            "articles": [
+                {
+                    "title": "Local sports tournament announced",
+                    "description": "No relation",
+                    "source": {"name": "Example X"},
+                }
+            ]
+        }
+        general = MagicMock()
+        general.status_code = 200
+        general.json.return_value = {
+            "articles": [
+                {"title": "General Story", "source": {"name": "Reuters"}},
+            ]
+        }
+        mock_get.side_effect = [topic_irrelevant, general]
+
+        result = get_top_headlines(topic="iran us israel")
+        assert "General Story" in result
+        assert mock_get.call_count == 2
+
+    @patch("voice_assistant.news.Config")
     def test_no_api_key_uses_fallback(self, mock_config):
         """Should fall back to RSS when no API key."""
         mock_config.GNEWS_API_KEY = ""

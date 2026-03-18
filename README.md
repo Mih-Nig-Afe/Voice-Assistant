@@ -140,6 +140,8 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - If browser speech reports a `network` failure, Miehab now switches immediately to built-in recording mode and transcribes audio through the backend.
 - In fallback mode, tap mic once to start recording and tap again (or wait ~7 seconds) to submit speech for transcription.
 - News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
+- News/update phrasing (for example `give me an update on Iran and Israel`) now routes to live headlines instead of generic model guesses.
+- Weather follow-up mode now rejects conversational noise as a city (for example `i'm kinda feeling too`) and asks for the city again.
 
 ### Docker Input Troubleshooting
 

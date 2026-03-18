@@ -82,6 +82,8 @@ _NEWS_TOPIC_STOPWORDS = {
     "the",
     "a",
     "an",
+    "and",
+    "or",
     "about",
     "on",
     "for",
@@ -105,6 +107,63 @@ _NEWS_TOPIC_STOPWORDS = {
     "updates",
     "any",
     "new",
+    "based",
+    "case",
+    "situation",
+    "story",
+}
+_NON_CITY_FOLLOWUP_TOKENS = {
+    "i",
+    "im",
+    "i'm",
+    "ive",
+    "i've",
+    "me",
+    "my",
+    "you",
+    "your",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "kinda",
+    "kind",
+    "feeling",
+    "feel",
+    "too",
+    "very",
+    "really",
+    "quite",
+    "just",
+    "hot",
+    "cold",
+    "fine",
+    "okay",
+    "ok",
+    "good",
+    "bad",
+    "better",
+    "worse",
+    "sorry",
+    "thanks",
+    "thank",
+}
+_NEWS_DIRECT_HINTS = {"news", "headline", "headlines", "happening"}
+_NEWS_UPDATE_HINTS = {"update", "updates", "latest", "current", "new", "developments"}
+_NON_NEWS_UPDATE_CONTEXT_WORDS = {
+    "weather",
+    "temperature",
+    "time",
+    "date",
+    "battery",
+    "system",
+    "joke",
+    "dictionary",
+    "define",
+    "calculate",
+    "math",
+    "wikipedia",
 }
 
 
@@ -395,14 +454,53 @@ def _normalize_city_candidate(text: str) -> str:
     return " ".join(city_tokens[:4]).strip()
 
 
+def _is_likely_city_candidate(raw_text: str, city_candidate: str) -> bool:
+    """Heuristic to reject conversational noise as weather city input."""
+    city = (city_candidate or "").strip().lower()
+    if not city:
+        return False
+
+    tokens = [token.strip(" .,'") for token in city.split() if token.strip(" .,'")]
+    if not tokens or len(tokens) > 4:
+        return False
+    if any(token in _NON_CITY_FOLLOWUP_TOKENS for token in tokens):
+        return False
+    if len(tokens) == 1 and len(tokens[0]) < 3:
+        return False
+
+    raw_tokens = [
+        token.strip(" .,'")
+        for token in re.findall(r"[a-zA-Z][a-zA-Z\-\.' ]*", (raw_text or "").lower())
+    ]
+    flattened: list[str] = []
+    for part in raw_tokens:
+        flattened.extend([word for word in part.split() if word])
+    if flattened and all(token in _NON_CITY_FOLLOWUP_TOKENS for token in flattened):
+        return False
+    return True
+
+
 def _normalize_news_topic_candidate(text: str) -> str:
     """Normalize possible topic text from natural-language news requests."""
-    raw_tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9\-\.'#+]*", (text or "").lower())
+    normalized = re.sub(r"\bbased on\b", " ", (text or "").lower())
+    raw_tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9\-\.'#+]*", normalized)
     tokens = [tok.strip(" .,'!?\"") for tok in raw_tokens]
     if not tokens:
         return ""
 
-    topic_tokens = [t for t in tokens if t and t not in _NEWS_TOPIC_STOPWORDS]
+    mapped_tokens: list[str] = []
+    for token in tokens:
+        if token in {"u.s", "u.s.", "usa"}:
+            mapped_tokens.append("us")
+            continue
+        mapped_tokens.append(token)
+
+    topic_tokens: list[str] = []
+    for token in mapped_tokens:
+        if not token or token in _NEWS_TOPIC_STOPWORDS:
+            continue
+        if token not in topic_tokens:
+            topic_tokens.append(token)
     if not topic_tokens:
         return ""
     return " ".join(topic_tokens[:6]).strip()
@@ -417,8 +515,23 @@ def _extract_news_topic(text: str) -> str:
     patterns = [
         r"(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
         r"(?:what(?:'s| is)\s+happening)\s+(?:in|with|on)\s+(.+)$",
-        r"(?:tell me|show me|give me|get me)\s+(?:the\s+)?(?:latest\s+|current\s+)?(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
-        r"(?:what(?:'s| is)\s+(?:the\s+)?)?(?:latest\s+|current\s+)?(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
+        (
+            r"(?:give me|tell me|show me)\s+(?:an?\s+)?"
+            r"(?:update|updates|latest|current)\s+"
+            r"(?:on|about|for|regarding|with)\s+(.+)$"
+        ),
+        r"(?:update|updates|latest|current|developments?)\s+(?:on|about|for|regarding|with)\s+(.+)$",
+        r"(?:what(?:'s| is)\s+(?:the\s+)?)?(?:latest|current|new)\s+(?:on|about|with)\s+(.+)$",
+        (
+            r"(?:tell me|show me|give me|get me)\s+(?:the\s+)?"
+            r"(?:latest\s+|current\s+)?(?:news|headlines)\s+"
+            r"(?:about|on|for|regarding)\s+(.+)$"
+        ),
+        (
+            r"(?:what(?:'s| is)\s+(?:the\s+)?)?"
+            r"(?:latest\s+|current\s+)?(?:news|headlines)\s+"
+            r"(?:about|on|for|regarding)\s+(.+)$"
+        ),
     ]
 
     for pattern in patterns:
@@ -430,6 +543,32 @@ def _extract_news_topic(text: str) -> str:
         return _normalize_news_topic_candidate(query)
 
     return ""
+
+
+def _is_news_intent(query: str) -> bool:
+    """Decide whether a free-form request should route to the news service."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+
+    if _contains_any_word(normalized, list(_NEWS_DIRECT_HINTS)):
+        return True
+
+    if _contains_any_word(normalized, list(_NON_NEWS_UPDATE_CONTEXT_WORDS)):
+        return False
+
+    update_like = _contains_any_word(normalized, list(_NEWS_UPDATE_HINTS))
+    if not update_like:
+        return False
+
+    if re.search(
+        r"\b(?:update|updates|latest|current|developments?|new)\b.*\b(?:on|about|with|regarding|for)\b",
+        normalized,
+    ):
+        return True
+
+    topic = _extract_news_topic(query)
+    return bool(topic)
 
 
 def process_user_query(user_input: str) -> ChatResponse:
@@ -455,6 +594,12 @@ def process_user_query(user_input: str) -> ChatResponse:
             "weather",
             "temperature",
             "news",
+            "headline",
+            "latest",
+            "update",
+            "updates",
+            "current",
+            "happening",
             "wikipedia",
             "joke",
             "define",
@@ -466,7 +611,10 @@ def process_user_query(user_input: str) -> ChatResponse:
             "help",
         ]
     ):
-        city = _extract_weather_city(query) or _normalize_city_candidate(query)
+        city = _extract_weather_city(query)
+        if not city:
+            candidate = _normalize_city_candidate(query)
+            city = candidate if _is_likely_city_candidate(query, candidate) else ""
         if city:
             _pending_weather_city = False
             response = get_weather(city)
@@ -476,7 +624,10 @@ def process_user_query(user_input: str) -> ChatResponse:
         return ChatResponse(response=response)
 
     if _contains_any_word(normalized, ["weather", "temperature"]):
-        city = _extract_weather_city(query) or _normalize_city_candidate(query)
+        city = _extract_weather_city(query)
+        if not city:
+            candidate = _normalize_city_candidate(query)
+            city = candidate if _is_likely_city_candidate(query, candidate) else ""
         if not city:
             _pending_weather_city = True
             response = (
@@ -488,9 +639,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
-    if any(
-        p in normalized for p in ["wikipedia", "tell me about", "who is", "what is"]
-    ):
+    if any(p in normalized for p in ["wikipedia", "tell me about", "who is", "what is"]) and not _is_news_intent(query):
         topic = _strip_phrases(
             normalized, ["wikipedia", "tell me about", "who is", "what is"]
         )
@@ -502,11 +651,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
-    if (
-        "news" in normalized
-        or "headlines" in normalized
-        or "what's happening" in normalized
-    ):
+    if _is_news_intent(query):
         topic = _extract_news_topic(query)
         response = get_top_headlines(topic if topic else None)
         memory.add_assistant_message(response)

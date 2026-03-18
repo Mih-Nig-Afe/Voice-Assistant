@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.13] - 2026-03-18
+
+### Fixed
+
+- Improved news intent routing so update-style requests (for example `give me an update on ...`) use the live news pipeline instead of generic AI answers.
+- Expanded topic extraction patterns for update/latest phrasing and normalized noisy wording around geopolitical requests.
+- Added news-topic relevance ranking to prioritize headlines that match requested entities (for example Iran/US/Israel) and de-prioritize unrelated results.
+- Tightened weather follow-up city handling to reject conversational noise and reprompt for a city instead of querying invalid phrases.
+
+### Tested
+
+- Added web regression tests for update-intent news routing, news-over-wiki preference for `what is the latest on ...`, and noisy weather follow-up handling.
+- Added news tests for relevance ranking/filtering and fallback when topic results are unrelated.
+
 ## [1.2.12] - 2026-03-18
 
 ### Fixed

@@ -73,6 +73,14 @@ def test_web_weather_follow_up_with_no_city_tokens_prompts_again() -> None:
     assert "Please tell me the city name" in response.response
 
 
+def test_web_weather_follow_up_with_conversational_noise_prompts_again() -> None:
+    web._pending_weather_city = True
+    with patch("voice_assistant.web.get_weather") as mocked:
+        response = process_user_query("i'm kinda feeling too")
+    mocked.assert_not_called()
+    assert "Please tell me the city name" in response.response
+
+
 def test_web_news_generic_phrase_uses_general_headlines() -> None:
     with patch("voice_assistant.web.get_top_headlines", return_value="Top news") as mocked:
         response = process_user_query("Tell me your news.")
@@ -87,6 +95,29 @@ def test_web_news_topic_phrase_extracts_clean_topic() -> None:
         response = process_user_query("What's the latest news about technology?")
     mocked.assert_called_once_with("technology")
     assert response.response == "Tech headlines"
+
+
+def test_web_news_update_phrase_routes_to_news_lookup() -> None:
+    web._pending_weather_city = False
+    with patch(
+        "voice_assistant.web.get_top_headlines", return_value="Iran update"
+    ) as mocked:
+        response = process_user_query(
+            "Give me an update on the Iran case based on the war with US and Israel."
+        )
+    mocked.assert_called_once_with("iran war us israel")
+    assert response.response == "Iran update"
+
+
+def test_web_what_is_latest_on_topic_prefers_news_over_wiki() -> None:
+    web._pending_weather_city = False
+    with patch(
+        "voice_assistant.web.get_top_headlines", return_value="Latest headlines"
+    ) as mocked_news, patch("voice_assistant.web.get_summary") as mocked_wiki:
+        response = process_user_query("What is the latest on Iran and Israel?")
+    mocked_news.assert_called_once_with("iran israel")
+    mocked_wiki.assert_not_called()
+    assert response.response == "Latest headlines"
 
 
 def test_web_redirects_0_0_0_0_origin_to_127_loopback() -> None:
