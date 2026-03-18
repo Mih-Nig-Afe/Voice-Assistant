@@ -74,6 +74,8 @@ _CITY_STOPWORDS = {
     "moment",
     "its",
     "it",
+    "detail",
+    "details",
 }
 _NEWS_TOPIC_STOPWORDS = {
     "news",
@@ -721,7 +723,7 @@ def _extract_context_city_reference(text: str) -> str:
         return ""
 
     patterns = [
-        r"\b(?:in|at|for)\s+([a-zA-Z][a-zA-Z\-\.' ]*?[a-zA-Z])(?=\s+(?:and|but|so|because|the|weather|temperature)\b|[?.!,]|$)",
+        r"\b(?:in|at|for|to)\s+([a-zA-Z][a-zA-Z\-\.' ]*?[a-zA-Z])(?=\s+(?:and|but|so|because|the|weather|temperature)\b|[?.!,]|$)",
         r"\bhere\s+in\s+([a-zA-Z][a-zA-Z\-\.' ]*?[a-zA-Z])(?=\s+(?:and|but|so|because|the|weather|temperature)\b|[?.!,]|$)",
     ]
     for pattern in patterns:
@@ -753,9 +755,21 @@ def _is_weather_status_intent(query: str) -> bool:
     if not is_question_like:
         return False
 
-    descriptive_words = ["hot", "cold", "humid", "rainy", "raining", "sunny", "chilly"]
+    descriptive_words = [
+        "hot",
+        "cold",
+        "warm",
+        "humid",
+        "rainy",
+        "raining",
+        "sunny",
+        "chilly",
+        "comfortable",
+        "uncomfortable",
+        "uncomfy",
+    ]
     if _contains_any_word(normalized, descriptive_words) and _contains_any_word(
-        normalized, ["how", "is", "it", "now", "today", "here"]
+        normalized, ["how", "is", "it", "that", "now", "today", "here", "feeling", "feel"]
     ):
         return True
     return False
@@ -779,6 +793,193 @@ def _resolve_weather_city(query: str, allow_last_city: bool = True) -> str:
         return _last_weather_city
 
     return ""
+
+
+def _is_weather_error_response(weather_response: str) -> bool:
+    """Return True when weather response is an error/status string."""
+    normalized = (weather_response or "").strip().lower()
+    if not normalized:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in [
+            "couldn't get weather",
+            "weather feature is unavailable",
+            "doesn't look like a valid city",
+            "weather service rate limit reached",
+            "the weather service is taking too long",
+            "couldn't connect to the weather service",
+            "i couldn't fetch the weather details",
+        ]
+    )
+
+
+def _parse_weather_snapshot(weather_response: str) -> Optional[dict[str, object]]:
+    """Parse standard weather response text into structured values."""
+    match = re.match(
+        (
+            r"^\s*(?P<city>[a-zA-Z][a-zA-Z\-\.' ]*?)\s+weather:\s*"
+            r"(?P<description>.+?),\s*"
+            r"(?P<temp>-?\d+(?:\.\d+)?)°C,\s*"
+            r"feels like\s*(?P<feels>-?\d+(?:\.\d+)?)°C\.\s*$"
+        ),
+        (weather_response or "").strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    city = (match.group("city") or "").strip()
+    description = (match.group("description") or "").strip()
+    if not city or not description:
+        return None
+
+    try:
+        temp_c = float(match.group("temp"))
+        feels_like_c = float(match.group("feels"))
+    except (TypeError, ValueError):
+        return None
+
+    return {
+        "city": city,
+        "description": description,
+        "temp_c": temp_c,
+        "feels_like_c": feels_like_c,
+    }
+
+
+def _format_celsius(value: float) -> str:
+    """Format celsius values compactly for speech output."""
+    rounded = round(value, 1)
+    if abs(rounded - int(rounded)) < 0.05:
+        return str(int(round(rounded)))
+    return f"{rounded:.1f}"
+
+
+def _weather_feel_label(feels_like_c: float) -> str:
+    """Convert feels-like temperature to a simple comfort label."""
+    if feels_like_c >= 33:
+        return "very hot"
+    if feels_like_c >= 28:
+        return "hot"
+    if feels_like_c >= 23:
+        return "warm"
+    if feels_like_c >= 18:
+        return "mild"
+    if feels_like_c >= 12:
+        return "cool"
+    return "cold"
+
+
+def _wants_weather_detail_response(query: str) -> bool:
+    """Return True when user explicitly asks for weather details/numbers."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if _contains_any_word(
+        normalized,
+        [
+            "detail",
+            "details",
+            "exact",
+            "number",
+            "numbers",
+            "temperature",
+            "temp",
+            "degrees",
+            "humidity",
+            "wind",
+            "breakdown",
+        ],
+    ):
+        return True
+    return "feels like" in normalized
+
+
+def _is_weather_comfort_question(query: str) -> bool:
+    """Return True for comfort/interpretation weather follow-up questions."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if _contains_any_word(
+        normalized,
+        ["hot", "cold", "warm", "comfortable", "uncomfortable", "uncomfy", "sleep", "sweaty"],
+    ):
+        return True
+    return any(
+        phrase in normalized
+        for phrase in [
+            "is that why",
+            "why am i feeling",
+            "why do i feel",
+            "what is happening here",
+            "what's happening here",
+        ]
+    )
+
+
+def _build_human_weather_response(query: str, weather_response: str) -> str:
+    """Turn raw weather text into a conversational, intent-aware answer."""
+    if _is_weather_error_response(weather_response):
+        return weather_response
+
+    snapshot = _parse_weather_snapshot(weather_response)
+    if not snapshot:
+        return weather_response
+
+    city = str(snapshot["city"]).title()
+    description = str(snapshot["description"])
+    temp_c = float(snapshot["temp_c"])
+    feels_like_c = float(snapshot["feels_like_c"])
+    temp_str = _format_celsius(temp_c)
+    feels_str = _format_celsius(feels_like_c)
+    normalized = (query or "").strip().lower()
+
+    if _wants_weather_detail_response(normalized):
+        return (
+            f"In {city} right now: {description}, {temp_str}°C, "
+            f"feels like {feels_str}°C."
+        )
+
+    if _is_weather_comfort_question(normalized):
+        label = _weather_feel_label(feels_like_c)
+        if feels_like_c >= 28:
+            comfort_line = "That is genuinely hot."
+        elif feels_like_c >= 23:
+            comfort_line = "That is warm, and it can feel uncomfortable if the room is stuffy."
+        elif feels_like_c >= 18:
+            comfort_line = "That is mild, so it is not truly hot."
+        else:
+            comfort_line = "That is cool, not hot."
+
+        feels_delta = feels_like_c - temp_c
+        if feels_delta >= 2:
+            explanation = "It feels warmer than the measured temperature, likely due to humidity."
+        elif feels_delta <= -2:
+            explanation = "It feels cooler than the measured temperature, likely due to rain or wind."
+        else:
+            explanation = (
+                "If you still feel uncomfortable, humidity, poor airflow, or recent sun exposure can make it feel warmer."
+            )
+
+        return (
+            f"In {city}, it is {description} at {temp_str}°C and feels like {feels_str}°C ({label}). "
+            f"{comfort_line} {explanation}"
+        )
+
+    if "happening" in normalized:
+        return (
+            f"In {city} right now, it is {description} at {temp_str}°C "
+            f"and feels like {feels_str}°C."
+        )
+
+    return f"{city} is currently {description}, around {temp_str}°C and feels like {feels_str}°C."
+
+
+def _respond_with_weather(query: str, city: str) -> str:
+    """Fetch weather and return a query-aware conversational response."""
+    raw_response = get_weather(city)
+    return _build_human_weather_response(query, raw_response)
 
 
 def _wants_news_summary(query: str) -> bool:
@@ -1004,7 +1205,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         if city:
             _pending_weather_city = False
             _last_weather_city = city
-            response = get_weather(city)
+            response = _respond_with_weather(query, city)
         else:
             response = "Please tell me the city name, for example: Addis Ababa."
         memory.add_assistant_message(response)
@@ -1020,7 +1221,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         else:
             _pending_weather_city = False
             _last_weather_city = city
-            response = get_weather(city)
+            response = _respond_with_weather(query, city)
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 

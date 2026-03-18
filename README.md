@@ -142,6 +142,7 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
 - News/update phrasing (for example `give me an update on Iran and Israel`) now routes to live headlines instead of generic model guesses.
 - Weather follow-up mode now rejects conversational noise as a city (for example `i'm kinda feeling too`) and asks for the city again.
+- Weather responses are now conversational and intent-aware: comfort questions (for example `is that hot?`) get interpreted guidance, while detail requests return explicit numbers.
 - News update requests are summarized into a short human-style situation update (grounded in fetched headlines) instead of always reading a full list.
 - News summary/follow-up answers now default to natural human-style output; confidence/source lines are included only when you explicitly ask for them.
 - News follow-up questions (for example `who is attacking now?`) now stay in the news context and answer from recent headlines instead of falling into Wikipedia topic lookup.

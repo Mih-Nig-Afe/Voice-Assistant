@@ -139,6 +139,42 @@ def test_web_weather_city_reference_inside_sentence_is_detected() -> None:
     assert response.response == "Hawassa weather ok"
 
 
+def test_web_weather_comfort_followup_is_interpreted_humanly() -> None:
+    web._last_weather_city = "hawassa"
+    with patch(
+        "voice_assistant.web.get_weather",
+        return_value="Hawassa weather: light rain, 19.97°C, feels like 19.9°C.",
+    ) as mocked:
+        response = process_user_query("So is that kinda hot? Is that why I'm feeling so uncomfy?")
+    mocked.assert_called_once_with("hawassa")
+    assert "not truly hot" in response.response.lower()
+    assert "humidity" in response.response.lower() or "airflow" in response.response.lower()
+
+
+def test_web_weather_detail_request_returns_detail_style_response() -> None:
+    with patch(
+        "voice_assistant.web.get_weather",
+        return_value="Hawassa weather: light rain, 19.97°C, feels like 19.9°C.",
+    ) as mocked:
+        response = process_user_query("Give me weather details for Hawassa.")
+    mocked.assert_called_once_with("hawassa")
+    assert response.response.startswith("In Hawassa right now:")
+    assert "feels like 19.9°C" in response.response
+
+
+def test_web_weather_happening_question_gets_explanatory_response() -> None:
+    with patch(
+        "voice_assistant.web.get_weather",
+        return_value="Hawassa weather: light rain, 19.97°C, feels like 19.9°C.",
+    ) as mocked:
+        response = process_user_query(
+            "I just moved back to Hawassa and it's kinda hot here. What is happening here?"
+        )
+    mocked.assert_called_once_with("hawassa")
+    assert "In Hawassa" in response.response
+    assert "19.9°C" in response.response
+
+
 def test_web_news_generic_phrase_uses_general_headlines() -> None:
     with patch("voice_assistant.web.get_top_headlines", return_value="Top news") as mocked:
         response = process_user_query("Tell me your news.")
