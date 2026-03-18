@@ -1,7 +1,10 @@
+import base64
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 from voice_assistant import web
-from voice_assistant.web import process_user_query
+from voice_assistant.web import app, process_user_query
 
 
 def test_web_help_command_returns_capabilities() -> None:
@@ -50,3 +53,50 @@ def test_web_city_name_not_misread_as_calculator_intent() -> None:
     with patch("voice_assistant.web.get_weather", return_value="Addis weather ok"):
         response = process_user_query("addis")
     assert "Addis weather ok" == response.response
+
+
+def test_web_redirects_0_0_0_0_origin_to_127_loopback() -> None:
+    client = TestClient(app, base_url="http://0.0.0.0:8000")
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://127.0.0.1:8000/"
+
+
+def test_web_transcribe_endpoint_returns_text() -> None:
+    client = TestClient(app)
+    sample_audio = b"audio-bytes" * 200
+    payload = base64.b64encode(sample_audio).decode("ascii")
+    with patch(
+        "voice_assistant.web._transcribe_audio_bytes", return_value="hello from mic"
+    ) as mocked:
+        response = client.post(
+            "/api/speech/transcribe",
+            json={"audio_base64": payload, "mime_type": "audio/webm"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"transcript": "hello from mic"}
+    mocked.assert_called_once()
+    assert mocked.call_args.args[0] == sample_audio
+
+
+def test_web_transcribe_endpoint_rejects_invalid_base64() -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/api/speech/transcribe",
+        json={"audio_base64": "not-base64", "mime_type": "audio/webm"},
+    )
+    assert response.status_code == 400
+    assert "base64" in response.json()["detail"].lower()
+
+
+def test_web_transcribe_endpoint_returns_empty_for_tiny_audio() -> None:
+    client = TestClient(app)
+    payload = base64.b64encode(b"a").decode("ascii")
+    with patch("voice_assistant.web._transcribe_audio_bytes") as mocked:
+        response = client.post(
+            "/api/speech/transcribe",
+            json={"audio_base64": payload, "mime_type": "audio/webm"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"transcript": ""}
+    mocked.assert_not_called()

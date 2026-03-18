@@ -5,11 +5,14 @@ assistant with typed or spoken input.
 """
 
 from contextlib import asynccontextmanager
+import base64
+import binascii
 from pathlib import Path
 import re
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,6 +41,7 @@ app = FastAPI(title="Miehab Web Assistant", version="1.0.0")
 app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 _pending_weather_city: bool = False
+_groq_audio_client = None
 
 
 class ChatRequest(BaseModel):
@@ -51,6 +55,102 @@ class ChatResponse(BaseModel):
 
     response: str
     should_exit: bool = False
+
+
+class SpeechTranscribeRequest(BaseModel):
+    """Incoming audio payload for server-side transcription."""
+
+    audio_base64: str
+    mime_type: Optional[str] = None
+    file_name: Optional[str] = None
+
+
+class SpeechTranscribeResponse(BaseModel):
+    """Outgoing transcription payload."""
+
+    transcript: str
+
+
+def _decode_audio_base64(audio_base64: str) -> bytes:
+    """Decode a base64 (or data URL) audio payload into bytes."""
+    payload = (audio_base64 or "").strip()
+    if not payload:
+        raise ValueError("Audio payload is empty.")
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1].strip()
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Audio payload is not valid base64 data.") from exc
+
+
+def _audio_extension_from_mime(mime_type: Optional[str]) -> str:
+    """Best-effort extension mapping for incoming browser audio."""
+    if not mime_type:
+        return "webm"
+    lowered = mime_type.lower()
+    if "webm" in lowered:
+        return "webm"
+    if "ogg" in lowered:
+        return "ogg"
+    if "wav" in lowered:
+        return "wav"
+    if "mp4" in lowered or "m4a" in lowered:
+        return "m4a"
+    if "mpeg" in lowered or "mp3" in lowered:
+        return "mp3"
+    return "webm"
+
+
+def _safe_audio_filename(file_name: Optional[str], mime_type: Optional[str]) -> str:
+    """Create a conservative filename accepted by transcription APIs."""
+    if file_name:
+        cleaned = re.sub(r"[^a-zA-Z0-9._-]", "", file_name).strip("._")
+        if cleaned:
+            return cleaned
+    return f"browser-mic.{_audio_extension_from_mime(mime_type)}"
+
+
+def _extract_transcript_text(response: object) -> str:
+    """Extract text from Groq transcription response object/dict."""
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    if isinstance(response, dict):
+        raw = response.get("text", "")
+        return str(raw).strip() if raw is not None else ""
+    return ""
+
+
+def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
+    """Transcribe audio bytes using Groq whisper API."""
+    global _groq_audio_client
+
+    if not audio_bytes:
+        return ""
+
+    api_key = Config.get_groq_key()
+    if not api_key:
+        raise RuntimeError("Speech transcription is unavailable: GROQ_API_KEY is missing.")
+
+    try:
+        from groq import Groq
+    except ImportError as exc:
+        raise RuntimeError(
+            "Speech transcription is unavailable: groq package is not installed."
+        ) from exc
+
+    if _groq_audio_client is None:
+        _groq_audio_client = Groq(api_key=api_key)
+
+    response = _groq_audio_client.audio.transcriptions.create(
+        model="whisper-large-v3-turbo",
+        file=(file_name, audio_bytes),
+        language="en",
+        temperature=0.0,
+        response_format="json",
+    )
+    return _extract_transcript_text(response)
 
 
 def _strip_phrases(text: str, phrases: list[str]) -> str:
@@ -318,6 +418,19 @@ async def _lifespan(_: FastAPI):
 app.router.lifespan_context = _lifespan
 
 
+@app.middleware("http")
+async def redirect_unsafe_loopback_host(
+    request: Request, call_next
+):  # pragma: no cover - exercised via integration-style test
+    """Redirect browser requests from 0.0.0.0 to 127.0.0.1 for mic-safe origin."""
+    host = (request.url.hostname or "").strip().lower()
+    if host == "0.0.0.0":
+        port = request.url.port or 8000
+        target = str(request.url.replace(netloc=f"127.0.0.1:{port}"))
+        return RedirectResponse(url=target, status_code=307)
+    return await call_next(request)
+
+
 @app.get("/")
 def index() -> FileResponse:
     """Serve the main web UI."""
@@ -328,6 +441,34 @@ def index() -> FileResponse:
 def health() -> dict[str, str]:
     """Health endpoint for runtime checks."""
     return {"status": "ok", "assistant": Config.ASSISTANT_NAME}
+
+
+@app.post("/api/speech/transcribe", response_model=SpeechTranscribeResponse)
+def transcribe_audio(payload: SpeechTranscribeRequest) -> SpeechTranscribeResponse:
+    """Transcribe browser-recorded audio through Groq whisper."""
+    try:
+        audio_bytes = _decode_audio_base64(payload.audio_base64)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if len(audio_bytes) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio payload too large.")
+    if len(audio_bytes) < 1024:
+        return SpeechTranscribeResponse(transcript="")
+
+    file_name = _safe_audio_filename(payload.file_name, payload.mime_type)
+    try:
+        transcript = _transcribe_audio_bytes(audio_bytes, file_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Audio transcription failure: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Speech transcription failed. Please try again.",
+        ) from exc
+
+    return SpeechTranscribeResponse(transcript=transcript)
 
 
 @app.post("/api/chat", response_model=ChatResponse)

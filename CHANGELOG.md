@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.8] - 2026-03-18
+
+### Fixed
+
+- Added backend speech transcription endpoint (`/api/speech/transcribe`) using Groq Whisper for browser-recorded audio fallback.
+- Added frontend automatic fallback from browser speech-recognition network/service failures to built-in recording mode.
+- Added safer handling for tiny/noise-only audio payloads to return an empty transcript instead of backend errors.
+
+### Tested
+
+- Added endpoint tests for transcription success path, invalid base64 rejection, and tiny-audio handling.
+
+## [1.2.7] - 2026-03-18
+
+### Fixed
+
+- Added web middleware redirect from `http://0.0.0.0:8000` to `http://127.0.0.1:8000` so browser mic features can use a loopback-safe origin.
+- Improved frontend mic guidance with explicit `0.0.0.0` bind-address messaging and dynamic loopback URL hints.
+- Reset browser speech network cooldown state after successful recognition so intermittent failures do not accumulate into false lockouts.
+
+### Tested
+
+- Added regression test coverage for `0.0.0.0` host redirect behavior in web mode.
+
 ## [1.2.6] - 2026-03-17
 
 ### Fixed

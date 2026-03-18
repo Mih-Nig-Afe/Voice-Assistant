@@ -136,6 +136,9 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - Spoken replies use browser `speechSynthesis` voices.
 - For best voice support, use current Chrome or Edge.
 - If mic permission is blocked, you can still use full text chat.
+- `http://0.0.0.0:8000` is not a microphone-safe browser origin; use `127.0.0.1` or `localhost`.
+- If browser speech shows repeated `network` errors, Miehab now switches to built-in recording mode and transcribes audio through the backend.
+- In fallback mode, tap mic once to start recording and tap again (or wait ~7 seconds) to submit speech for transcription.
 
 ### Docker Input Troubleshooting
 
@@ -143,6 +146,7 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - `docker compose up --build` now runs the web UI server, not the terminal chat loop.
 - Use `docker compose run --rm miehab python scripts/run.py` only when you specifically want terminal text mode.
 - On macOS/Windows, browser voice features depend on browser mic permissions (Chrome/Edge recommended).
+- Opening `http://0.0.0.0:8000` now redirects to `http://127.0.0.1:8000` automatically.
 
 ---
 
