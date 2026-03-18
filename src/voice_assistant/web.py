@@ -903,7 +903,18 @@ def _is_weather_comfort_question(query: str) -> bool:
         return False
     if _contains_any_word(
         normalized,
-        ["hot", "cold", "warm", "comfortable", "uncomfortable", "uncomfy", "sleep", "sweaty"],
+        [
+            "hot",
+            "cold",
+            "warm",
+            "mild",
+            "moderate",
+            "comfortable",
+            "uncomfortable",
+            "uncomfy",
+            "sleep",
+            "sweaty",
+        ],
     ):
         return True
     return any(
@@ -935,12 +946,6 @@ def _build_human_weather_response(query: str, weather_response: str) -> str:
     feels_str = _format_celsius(feels_like_c)
     normalized = (query or "").strip().lower()
 
-    if _wants_weather_detail_response(normalized):
-        return (
-            f"In {city} right now: {description}, {temp_str}°C, "
-            f"feels like {feels_str}°C."
-        )
-
     if _is_weather_comfort_question(normalized):
         label = _weather_feel_label(feels_like_c)
         if feels_like_c >= 28:
@@ -965,6 +970,12 @@ def _build_human_weather_response(query: str, weather_response: str) -> str:
         return (
             f"In {city}, it is {description} at {temp_str}°C and feels like {feels_str}°C ({label}). "
             f"{comfort_line} {explanation}"
+        )
+
+    if _wants_weather_detail_response(normalized):
+        return (
+            f"In {city} right now: {description}, {temp_str}°C, "
+            f"feels like {feels_str}°C."
         )
 
     if "happening" in normalized:

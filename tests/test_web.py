@@ -151,6 +151,18 @@ def test_web_weather_comfort_followup_is_interpreted_humanly() -> None:
     assert "humidity" in response.response.lower() or "airflow" in response.response.lower()
 
 
+def test_web_weather_comfort_comparison_does_not_fall_back_to_detail_mode() -> None:
+    web._last_weather_city = "hawassa"
+    with patch(
+        "voice_assistant.web.get_weather",
+        return_value="Hawassa weather: light rain, 19.97°C, feels like 19.9°C.",
+    ) as mocked:
+        response = process_user_query("So is it kind of hot or warm or just a moderate temperature?")
+    mocked.assert_called_once_with("hawassa")
+    assert "In Hawassa right now:" not in response.response
+    assert "mild" in response.response.lower() or "warm" in response.response.lower()
+
+
 def test_web_weather_detail_request_returns_detail_style_response() -> None:
     with patch(
         "voice_assistant.web.get_weather",

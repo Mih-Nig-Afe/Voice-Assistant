@@ -10,11 +10,12 @@ All notable changes to this project are documented in this file.
 - Added weather interpretation for comfort-style follow-ups (for example `is that hot` / `why am I uncomfortable`) using live condition + temperature + feels-like values.
 - Added detail-mode weather replies when users explicitly ask for numbers/details.
 - Improved weather city extraction for phrasing like `moved back to Hawassa` and `weather details for Hawassa`.
+- Fixed comfort-vs-detail prioritization so comparative questions (for example `hot or warm or moderate`) get interpreted answers instead of raw numeric repeats.
 
 ### Tested
 
 - Added web regression tests for comfort follow-up weather interpretation, detail-style weather replies, and explanatory weather responses from mixed conversational input.
-- Full suite passing: `146 passed`.
+- Full suite passing: `147 passed`.
 
 ## [1.2.17] - 2026-03-18
 
