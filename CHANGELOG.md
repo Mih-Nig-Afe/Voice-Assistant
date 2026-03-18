@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.19] - 2026-03-18
+
+### Fixed
+
+- Added explicit headline-reference follow-up handling (for example `more about headline 5`) so news stays anchored to the selected headline/topic instead of drifting into unrelated lists.
+- Improved topic cleanup for noisy speech-transcript phrasing by removing filler tokens and standalone digits from extracted news topics.
+- Added a guarded fallback message when a topic-specific refresh cannot be found, to avoid presenting unrelated generic headlines as if they were topical.
+
+### Tested
+
+- Added web regression tests for noisy news phrase normalization, headline-number follow-up summarization, and headline follow-up fallback behavior.
+- Full suite passing: `151 passed`.
+
 ## [1.2.18] - 2026-03-18
 
 ### Fixed

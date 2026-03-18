@@ -141,6 +141,7 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - In fallback mode, tap mic once to start recording and tap again (or wait ~7 seconds) to submit speech for transcription.
 - News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
 - News/update phrasing (for example `give me an update on Iran and Israel`) now routes to live headlines instead of generic model guesses.
+- Headline-number follow-ups (for example `more about headline 5`) now stay focused on that selected headline/topic.
 - Weather follow-up mode now rejects conversational noise as a city (for example `i'm kinda feeling too`) and asks for the city again.
 - Weather responses are now conversational and intent-aware: comfort questions (for example `is that hot?`) get interpreted guidance, while detail requests return explicit numbers.
 - News update requests are summarized into a short human-style situation update (grounded in fetched headlines) instead of always reading a full list.

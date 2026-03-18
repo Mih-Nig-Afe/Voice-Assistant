@@ -128,6 +128,14 @@ _NEWS_TOPIC_STOPWORDS = {
     "more",
     "between",
     "our",
+    "common",
+    "terms",
+    "term",
+    "include",
+    "includes",
+    "may",
+    "world-news",
+    "worldnews",
 }
 _NON_CITY_FOLLOWUP_TOKENS = {
     "i",
@@ -189,6 +197,13 @@ _NEWS_SUMMARY_HINTS = {
     "situation",
     "details",
     "detailed",
+    "deep",
+    "deep dive",
+    "dip",
+    "brief",
+    "breakdown",
+    "explain",
+    "summary",
     "going on",
 }
 _NEWS_LIST_HINTS = {"headline", "headlines", "list"}
@@ -322,7 +337,9 @@ def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
 
     api_key = Config.get_groq_key()
     if not api_key:
-        raise RuntimeError("Speech transcription is unavailable: GROQ_API_KEY is missing.")
+        raise RuntimeError(
+            "Speech transcription is unavailable: GROQ_API_KEY is missing."
+        )
 
     try:
         from groq import Groq
@@ -551,6 +568,8 @@ def _normalize_news_topic_candidate(text: str) -> str:
 
     topic_tokens: list[str] = []
     for token in mapped_tokens:
+        if token.isdigit():
+            continue
         if not token or token in _NEWS_TOPIC_STOPWORDS:
             continue
         if token not in topic_tokens:
@@ -644,6 +663,133 @@ def _extract_news_followup_topic(query: str) -> str:
     return ""
 
 
+def _extract_headline_reference_index(query: str) -> Optional[int]:
+    """Extract a 1-based headline index from follow-up text, if present."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return None
+
+    patterns = [
+        r"\bheadline(?:\s+number)?\s*(\d{1,2})\b",
+        r"\b(\d{1,2})(?:st|nd|rd|th)?\s+headline\b",
+        r"\bnumber\s+(\d{1,2})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        try:
+            index = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if index >= 1:
+            return index
+    return None
+
+
+def _resolve_headline_reference(query: str) -> Optional[tuple[int, str, str]]:
+    """Resolve referenced cached headline as (index, title, source)."""
+    index = _extract_headline_reference_index(query)
+    if not index:
+        return None
+    items = _extract_headline_items(_last_news_headline_response)
+    if not items or index > len(items):
+        return None
+    title, source = items[index - 1]
+    return index, title, source
+
+
+def _is_topic_specific_news_payload(news_response: str) -> bool:
+    """Return True when headlines payload is topic-filtered (not generic fallback)."""
+    normalized = (news_response or "").strip().lower()
+    return "here are the latest headlines on " in normalized
+
+
+def _choose_headline_followup_topic(query: str, selected_title: str) -> str:
+    """Pick the cleanest topic for a headline-number follow-up."""
+    title_topic = _normalize_news_topic_candidate(selected_title)
+    explicit_topic = _extract_news_followup_topic(query)
+    if not title_topic:
+        return explicit_topic
+    if not explicit_topic:
+        return title_topic
+
+    title_tokens = set(title_topic.split())
+    explicit_tokens = set(explicit_topic.split())
+    if explicit_tokens and explicit_tokens.issubset(title_tokens):
+        return explicit_topic
+    return title_topic
+
+
+def _build_selected_headline_brief(index: int, title: str, source: str) -> str:
+    """Generate a concise human brief anchored to one selected headline."""
+    clean_title = (title or "").strip()
+    clean_source = (source or "").strip()
+    if not clean_title:
+        return "I could not parse that headline clearly. Please ask again."
+    if clean_source:
+        return (
+            f"Based on headline {index} from {clean_source}: {clean_title}. "
+            "That is the key update from this item."
+        )
+    return f"Based on headline {index}: {clean_title}. That is the key update from this item."
+
+
+def _wants_headline_deep_dive(query: str) -> bool:
+    """Detect requests asking for a deeper explanation of one selected headline."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if any(
+        phrase in normalized
+        for phrase in [
+            "deep dive",
+            "dive deep",
+            "more detail",
+            "more details",
+            "explain headline",
+        ]
+    ):
+        return True
+    return _contains_any_word(
+        normalized,
+        [
+            "deep",
+            "dip",
+            "detail",
+            "details",
+            "brief",
+            "breakdown",
+            "summary",
+            "summarize",
+            "explain",
+        ],
+    )
+
+
+def _build_selected_headline_deep_dive(
+    query: str, index: int, title: str, source: str
+) -> str:
+    """Generate a short deep-dive answer grounded in one selected headline."""
+    fallback = _build_selected_headline_brief(index, title, source)
+    clean_title = (title or "").strip()
+    if not clean_title:
+        return fallback
+
+    prompt = (
+        "You are answering a user who asked for more detail on one specific headline.\n"
+        "Use ONLY the headline text below. Do not invent facts or extra background.\n"
+        "Write 1-2 plain, direct sentences.\n"
+        "If the headline is too limited, say details are limited.\n"
+        f"User request: {query}\n"
+        f"Headline number: {index}\n"
+        f"Headline: {clean_title}\n"
+        f"Source: {source or 'unknown'}"
+    )
+    answer = generate_response(prompt, conversation_history=None).strip()
+    return answer or fallback
+
+
 def _wants_news_refresh(query: str) -> bool:
     """Whether user asks for fresh headlines instead of follow-up clarification."""
     normalized = (query or "").strip().lower()
@@ -671,7 +817,9 @@ def _news_topic_tokens(topic: str) -> set[str]:
         "missile",
         "ceasefire",
     }
-    return {token for token in normalized.split() if token and token not in generic_tokens}
+    return {
+        token for token in normalized.split() if token and token not in generic_tokens
+    }
 
 
 def _topics_related(current_topic: str, cached_topic: str) -> bool:
@@ -700,7 +848,10 @@ def _is_news_followup_question(query: str) -> bool:
     normalized = (query or "").strip().lower()
     if not normalized:
         return False
-    if not (_contains_any_word(normalized, ["who", "what", "which", "how"]) or "?" in normalized):
+    if not (
+        _contains_any_word(normalized, ["who", "what", "which", "how"])
+        or "?" in normalized
+    ):
         return False
 
     followup_topic = _extract_news_followup_topic(query)
@@ -745,7 +896,13 @@ def _is_weather_status_intent(query: str) -> bool:
 
     if any(
         phrase in normalized
-        for phrase in ["how hot", "how cold", "how is it now", "how's it now", "how old is it"]
+        for phrase in [
+            "how hot",
+            "how cold",
+            "how is it now",
+            "how's it now",
+            "how old is it",
+        ]
     ):
         return True
 
@@ -769,7 +926,8 @@ def _is_weather_status_intent(query: str) -> bool:
         "uncomfy",
     ]
     if _contains_any_word(normalized, descriptive_words) and _contains_any_word(
-        normalized, ["how", "is", "it", "that", "now", "today", "here", "feeling", "feel"]
+        normalized,
+        ["how", "is", "it", "that", "now", "today", "here", "feeling", "feel"],
     ):
         return True
     return False
@@ -951,7 +1109,9 @@ def _build_human_weather_response(query: str, weather_response: str) -> str:
         if feels_like_c >= 28:
             comfort_line = "That is genuinely hot."
         elif feels_like_c >= 23:
-            comfort_line = "That is warm, and it can feel uncomfortable if the room is stuffy."
+            comfort_line = (
+                "That is warm, and it can feel uncomfortable if the room is stuffy."
+            )
         elif feels_like_c >= 18:
             comfort_line = "That is mild, so it is not truly hot."
         else:
@@ -959,13 +1119,13 @@ def _build_human_weather_response(query: str, weather_response: str) -> str:
 
         feels_delta = feels_like_c - temp_c
         if feels_delta >= 2:
-            explanation = "It feels warmer than the measured temperature, likely due to humidity."
+            explanation = (
+                "It feels warmer than the measured temperature, likely due to humidity."
+            )
         elif feels_delta <= -2:
             explanation = "It feels cooler than the measured temperature, likely due to rain or wind."
         else:
-            explanation = (
-                "If you still feel uncomfortable, humidity, poor airflow, or recent sun exposure can make it feel warmer."
-            )
+            explanation = "If you still feel uncomfortable, humidity, poor airflow, or recent sun exposure can make it feel warmer."
 
         return (
             f"In {city}, it is {description} at {temp_str}°C and feels like {feels_str}°C ({label}). "
@@ -1010,7 +1170,9 @@ def _wants_news_meta_details(query: str) -> bool:
     normalized = (query or "").strip().lower()
     if not normalized:
         return False
-    if _contains_any_word(normalized, ["source", "sources", "confidence", "certain", "certainty"]):
+    if _contains_any_word(
+        normalized, ["source", "sources", "confidence", "certain", "certainty"]
+    ):
         return True
     return "how sure" in normalized or "how reliable" in normalized
 
@@ -1045,9 +1207,7 @@ def _build_news_confidence_line(headline_items: list[tuple[str, str]]) -> str:
             "Confidence: medium. Coverage is broad enough for a directional update, "
             "but some details may still be uncertain."
         )
-    return (
-        "Confidence: low-medium. Limited coverage right now, so treat this as an early update."
-    )
+    return "Confidence: low-medium. Limited coverage right now, so treat this as an early update."
 
 
 def _build_news_sources_line(headline_items: list[tuple[str, str]]) -> str:
@@ -1171,7 +1331,8 @@ def process_user_query(user_input: str) -> ChatResponse:
 
     context_city = _extract_context_city_reference(query)
     if context_city and _contains_any_word(
-        normalized, ["weather", "temperature", "hot", "cold", "humid", "rain", "sunny", "chilly"]
+        normalized,
+        ["weather", "temperature", "hot", "cold", "humid", "rain", "sunny", "chilly"],
     ):
         _last_weather_city = context_city
 
@@ -1236,6 +1397,37 @@ def process_user_query(user_input: str) -> ChatResponse:
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
+    headline_reference = _resolve_headline_reference(query)
+    if headline_reference:
+        index, selected_title, selected_source = headline_reference
+        topic = _choose_headline_followup_topic(query, selected_title)
+
+        if _wants_headline_deep_dive(query):
+            response = _build_selected_headline_deep_dive(
+                query,
+                index,
+                selected_title,
+                selected_source,
+            )
+            memory.add_assistant_message(response)
+            return ChatResponse(response=response)
+
+        headline_response = get_top_headlines(topic if topic else None)
+        if topic and not _is_topic_specific_news_payload(headline_response):
+            response = (
+                f"I do not have enough new related headlines right now. "
+                f"{_build_selected_headline_brief(index, selected_title, selected_source)}"
+            )
+        else:
+            response = _summarize_news_update(
+                query, topic if topic else None, headline_response
+            )
+
+        _last_news_topic = topic if topic else _GENERAL_NEWS_TOPIC
+        _last_news_headline_response = headline_response
+        memory.add_assistant_message(response)
+        return ChatResponse(response=response)
+
     if _is_news_followup_question(query):
         topic = _extract_news_followup_topic(query) or _last_news_topic
         can_reuse_cached = (
@@ -1247,13 +1439,17 @@ def process_user_query(user_input: str) -> ChatResponse:
             headline_response = _last_news_headline_response
         else:
             headline_response = get_top_headlines(topic if topic else None)
-        response = _answer_news_followup(query, topic if topic else None, headline_response)
+        response = _answer_news_followup(
+            query, topic if topic else None, headline_response
+        )
         _last_news_topic = topic if topic else _GENERAL_NEWS_TOPIC
         _last_news_headline_response = headline_response
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
-    if any(p in normalized for p in ["wikipedia", "tell me about", "who is", "what is"]) and not _is_news_intent(query):
+    if any(
+        p in normalized for p in ["wikipedia", "tell me about", "who is", "what is"]
+    ) and not _is_news_intent(query):
         topic = _strip_phrases(
             normalized, ["wikipedia", "tell me about", "who is", "what is"]
         )
@@ -1269,7 +1465,9 @@ def process_user_query(user_input: str) -> ChatResponse:
         topic = _extract_news_topic(query)
         headline_response = get_top_headlines(topic if topic else None)
         if _wants_news_summary(query):
-            response = _summarize_news_update(query, topic if topic else None, headline_response)
+            response = _summarize_news_update(
+                query, topic if topic else None, headline_response
+            )
         else:
             response = headline_response
         _last_news_topic = topic if topic else _GENERAL_NEWS_TOPIC
@@ -1459,7 +1657,9 @@ def transcribe_audio(payload: SpeechTranscribeRequest) -> SpeechTranscribeRespon
 
 
 @app.post("/api/speech/synthesize", response_model=SpeechSynthesizeResponse)
-async def synthesize_audio(payload: SpeechSynthesizeRequest) -> SpeechSynthesizeResponse:
+async def synthesize_audio(
+    payload: SpeechSynthesizeRequest,
+) -> SpeechSynthesizeResponse:
     """Synthesize assistant text into speech for the browser to play."""
     text = _normalize_tts_text(payload.text)
     if not text:
