@@ -135,6 +135,20 @@ class SpeechTranscribeResponse(BaseModel):
     transcript: str
 
 
+class SpeechSynthesizeRequest(BaseModel):
+    """Incoming text payload for server-side speech synthesis."""
+
+    text: str
+
+
+class SpeechSynthesizeResponse(BaseModel):
+    """Outgoing synthesized speech payload."""
+
+    audio_base64: str
+    mime_type: str = "audio/mpeg"
+    engine: str = "edge-tts"
+
+
 def _decode_audio_base64(audio_base64: str) -> bytes:
     """Decode a base64 (or data URL) audio payload into bytes."""
     payload = (audio_base64 or "").strip()
@@ -222,6 +236,96 @@ def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
 
     response = _groq_audio_client.audio.transcriptions.create(**request_payload)
     return _extract_transcript_text(response)
+
+
+def _normalize_tts_text(text: str) -> str:
+    """Normalize text before sending it to neural TTS."""
+    cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+    cleaned = cleaned.replace("*", "").replace("`", "")
+    return cleaned
+
+
+def _split_tts_segments(text: str, max_chars: int = 260) -> list[str]:
+    """Split long text into sentence-like segments for stable TTS generation."""
+    if not text:
+        return []
+    parts = re.findall(r"[^.!?]+[.!?]?", text) or [text]
+    segments: list[str] = []
+    current = ""
+    for raw in parts:
+        sentence = raw.strip()
+        if not sentence:
+            continue
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            segments.append(current)
+        if len(sentence) <= max_chars:
+            current = sentence
+            continue
+        for idx in range(0, len(sentence), max_chars):
+            chunk = sentence[idx : idx + max_chars].strip()
+            if chunk:
+                segments.append(chunk)
+        current = ""
+    if current:
+        segments.append(current)
+    return segments
+
+
+async def _synthesize_edge_tts_segment(segment: str) -> bytes:
+    """Synthesize one text segment using edge-tts."""
+    try:
+        import edge_tts
+    except ImportError as exc:
+        raise RuntimeError(
+            "Speech synthesis backend is unavailable: edge-tts is not installed."
+        ) from exc
+
+    communicate = edge_tts.Communicate(
+        text=segment,
+        voice=Config.WEB_TTS_VOICE,
+        rate=Config.WEB_TTS_RATE,
+        pitch=Config.WEB_TTS_PITCH,
+    )
+    chunks: list[bytes] = []
+    async for packet in communicate.stream():
+        if packet.get("type") != "audio":
+            continue
+        data = packet.get("data")
+        if isinstance(data, (bytes, bytearray)):
+            chunks.append(bytes(data))
+    return b"".join(chunks)
+
+
+async def _synthesize_text_audio_bytes(text: str) -> bytes:
+    """Synthesize normalized text into MP3 bytes."""
+    backend = Config.WEB_TTS_BACKEND.strip().lower()
+    if backend == "browser":
+        raise RuntimeError(
+            "Server speech synthesis is disabled by WEB_TTS_BACKEND=browser."
+        )
+
+    segments = _split_tts_segments(text)
+    if not segments:
+        return b""
+
+    audio_parts: list[bytes] = []
+    for segment in segments:
+        audio = await _synthesize_edge_tts_segment(segment)
+        if audio:
+            audio_parts.append(audio)
+    return b"".join(audio_parts)
+
+
+def _server_tts_backend_name() -> str:
+    """Return user-facing server TTS backend name for health/status APIs."""
+    backend = Config.WEB_TTS_BACKEND.strip().lower()
+    if backend == "browser":
+        return "browser"
+    return "edge-tts"
 
 
 def _strip_phrases(text: str, phrases: list[str]) -> str:
@@ -551,7 +655,11 @@ def index() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     """Health endpoint for runtime checks."""
-    return {"status": "ok", "assistant": Config.ASSISTANT_NAME}
+    return {
+        "status": "ok",
+        "assistant": Config.ASSISTANT_NAME,
+        "tts_backend": _server_tts_backend_name(),
+    }
 
 
 @app.post("/api/speech/transcribe", response_model=SpeechTranscribeResponse)
@@ -580,6 +688,41 @@ def transcribe_audio(payload: SpeechTranscribeRequest) -> SpeechTranscribeRespon
         ) from exc
 
     return SpeechTranscribeResponse(transcript=transcript)
+
+
+@app.post("/api/speech/synthesize", response_model=SpeechSynthesizeResponse)
+async def synthesize_audio(payload: SpeechSynthesizeRequest) -> SpeechSynthesizeResponse:
+    """Synthesize assistant text into speech for the browser to play."""
+    text = _normalize_tts_text(payload.text)
+    if not text:
+        raise HTTPException(status_code=400, detail="Text payload is empty.")
+    if len(text) > Config.WEB_TTS_MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Text payload exceeds WEB_TTS_MAX_CHARS ({Config.WEB_TTS_MAX_CHARS}).",
+        )
+
+    try:
+        audio_bytes = await _synthesize_text_audio_bytes(text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Speech synthesis failure: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=502, detail="Speech synthesis failed. Please try again."
+        ) from exc
+
+    if not audio_bytes:
+        raise HTTPException(
+            status_code=502, detail="Speech synthesis returned empty audio."
+        )
+
+    encoded = base64.b64encode(audio_bytes).decode("ascii")
+    return SpeechSynthesizeResponse(
+        audio_base64=encoded,
+        mime_type="audio/mpeg",
+        engine=_server_tts_backend_name(),
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)

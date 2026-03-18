@@ -38,6 +38,27 @@ let targetX = 0;
 let targetY = 0;
 const SPEECH_ERROR_COOLDOWN_MS = 2500;
 const FALLBACK_RECORDING_MS = 7000;
+const PREFERRED_NEURAL_VOICE_HINTS = [
+  "neural",
+  "natural",
+  "wavenet",
+  "studio",
+  "enhanced",
+  "premium",
+];
+const PREFERRED_ENGLISH_VOICE_HINTS = [
+  "aria",
+  "jenny",
+  "sara",
+  "guy",
+  "davis",
+  "google us english",
+  "libby",
+  "zoe",
+];
+let speechJobToken = 0;
+let activeSpeechAudio = null;
+const SERVER_TTS_TEXT_LIMIT = 900;
 
 function isLoopbackHost(hostname) {
   if (!hostname) {
@@ -524,38 +545,290 @@ function animateOrb() {
 
 function initSpeechSynthesis() {
   if (!("speechSynthesis" in window)) {
-    speechEnabled = false;
-    if (voiceBtn) {
-      voiceBtn.disabled = true;
-      voiceBtn.textContent = "Voice Replies: Unsupported";
-    }
+    currentVoice = null;
     return;
   }
 
+  const scoreVoice = (voice) => {
+    let score = 0;
+    const lang = (voice.lang || "").toLowerCase();
+    const name = (voice.name || "").toLowerCase();
+    const uri = (voice.voiceURI || "").toLowerCase();
+
+    if (lang.startsWith("en-us")) {
+      score += 60;
+    } else if (lang.startsWith("en-gb")) {
+      score += 55;
+    } else if (lang.startsWith("en")) {
+      score += 45;
+    }
+
+    if (voice.default) {
+      score += 5;
+    }
+
+    for (const hint of PREFERRED_NEURAL_VOICE_HINTS) {
+      if (name.includes(hint) || uri.includes(hint)) {
+        score += 20;
+      }
+    }
+
+    for (const hint of PREFERRED_ENGLISH_VOICE_HINTS) {
+      if (name.includes(hint) || uri.includes(hint)) {
+        score += 12;
+      }
+    }
+
+    if (name.includes("male")) {
+      score += 1;
+    }
+    if (name.includes("female")) {
+      score += 1;
+    }
+    return score;
+  };
+
+  const pickBestVoice = (voices) => {
+    if (!voices.length) {
+      return null;
+    }
+    return [...voices].sort((a, b) => scoreVoice(b) - scoreVoice(a))[0] || voices[0];
+  };
+
   const pickVoice = () => {
     const voices = window.speechSynthesis.getVoices();
-    currentVoice =
-      voices.find((v) => /en-US|en-GB/i.test(v.lang)) || voices[0] || null;
+    currentVoice = pickBestVoice(voices);
   };
 
   pickVoice();
   window.speechSynthesis.onvoiceschanged = pickVoice;
 }
 
-function speakText(text) {
-  if (!speechEnabled || !("speechSynthesis" in window) || !text) {
+function normalizeSpeechText(text) {
+  return (text || "")
+    .replace(/[*_`#]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/([.!?])(?=[A-Za-z])/g, "$1 ")
+    .trim();
+}
+
+function splitSpeechChunks(text, maxChars = 220) {
+  if (!text) {
+    return [];
+  }
+  const sentences = text.match(/[^.!?]+[.!?]?/g) || [text];
+  const chunks = [];
+  let current = "";
+
+  for (const rawSentence of sentences) {
+    const sentence = rawSentence.trim();
+    if (!sentence) {
+      continue;
+    }
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      chunks.push(current.trim());
+    }
+    if (sentence.length <= maxChars) {
+      current = sentence;
+      continue;
+    }
+    for (let i = 0; i < sentence.length; i += maxChars) {
+      const piece = sentence.slice(i, i + maxChars).trim();
+      if (piece) {
+        chunks.push(piece);
+      }
+    }
+    current = "";
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+  return chunks;
+}
+
+function getSpeechProsody(text, index, total) {
+  const lower = (text || "").toLowerCase();
+  let rate = 0.96;
+  let pitch = 1.02;
+  let volume = 1.0;
+
+  if (/[!?]/.test(text)) {
+    rate += 0.02;
+    pitch += 0.03;
+  }
+  if (/sorry|unfortunately|cannot|can't|couldn't|error|failed/.test(lower)) {
+    rate -= 0.05;
+    pitch -= 0.03;
+  }
+  if (/great|awesome|nice|perfect|glad|good news|congrats|excellent/.test(lower)) {
+    pitch += 0.04;
+  }
+  if (/joke|funny|laugh|haha/.test(lower)) {
+    rate += 0.03;
+    pitch += 0.05;
+  }
+  if (total > 1 && index > 0) {
+    rate += 0.01;
+  }
+
+  return {
+    rate: Math.max(0.82, Math.min(1.12, rate)),
+    pitch: Math.max(0.86, Math.min(1.18, pitch)),
+    volume: Math.max(0.8, Math.min(1.0, volume)),
+  };
+}
+
+function cancelSpeechPlayback() {
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  if (activeSpeechAudio) {
+    activeSpeechAudio.pause();
+    activeSpeechAudio.src = "";
+    activeSpeechAudio = null;
+  }
+}
+
+async function requestServerSpeech(preparedText) {
+  const clippedText = preparedText.slice(0, SERVER_TTS_TEXT_LIMIT);
+  if (!clippedText) {
+    return null;
+  }
+  const response = await fetch("/api/speech/synthesize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: clippedText }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return null;
+  }
+  const audioBase64 = (data?.audio_base64 || "").trim();
+  if (!audioBase64) {
+    return null;
+  }
+  return {
+    audioBase64,
+    mimeType: (data?.mime_type || "audio/mpeg").trim(),
+  };
+}
+
+async function playServerSpeechAudio(audioBase64, mimeType, token) {
+  if (token !== speechJobToken || !speechEnabled) {
+    return false;
+  }
+  const audio = new Audio(`data:${mimeType};base64,${audioBase64}`);
+  activeSpeechAudio = audio;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (activeSpeechAudio === audio) {
+        activeSpeechAudio = null;
+      }
+      resolve(ok);
+    };
+
+    audio.onended = () => {
+      if (token === speechJobToken) {
+        setState("idle", "Tap the mic and speak naturally.");
+      }
+      finish(true);
+    };
+    audio.onerror = () => {
+      finish(false);
+    };
+    audio.play().then(() => {
+      if (token === speechJobToken) {
+        setState("speaking", "Miehab is responding...");
+      }
+    }).catch(() => {
+      finish(false);
+    });
+  });
+}
+
+function speakBrowserChunks(chunks, token, index = 0) {
+  if (token !== speechJobToken) {
+    return;
+  }
+  if (index >= chunks.length) {
+    setState("idle", "Tap the mic and speak naturally.");
     return;
   }
 
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
+  const chunk = chunks[index];
+  const utterance = new SpeechSynthesisUtterance(chunk);
   utterance.voice = currentVoice;
-  utterance.rate = 1;
-  utterance.pitch = 1;
-  utterance.onstart = () => setState("speaking", "Miehab is responding...");
-  utterance.onend = () => setState("idle", "Tap the mic and speak naturally.");
-  utterance.onerror = () => setState("idle", "Voice output had an error.");
+  utterance.lang = currentVoice?.lang || "en-US";
+  const prosody = getSpeechProsody(chunk, index, chunks.length);
+  utterance.rate = prosody.rate;
+  utterance.pitch = prosody.pitch;
+  utterance.volume = prosody.volume;
+
+  utterance.onstart = () => {
+    if (index === 0) {
+      setState("speaking", "Miehab is responding...");
+    }
+  };
+  utterance.onend = () => {
+    speakBrowserChunks(chunks, token, index + 1);
+  };
+  utterance.onerror = () => {
+    setState("idle", "Voice output had an error.");
+  };
   window.speechSynthesis.speak(utterance);
+}
+
+async function speakText(text) {
+  if (!speechEnabled || !text) {
+    return;
+  }
+
+  const prepared = normalizeSpeechText(text);
+  if (!prepared) {
+    return;
+  }
+
+  speechJobToken += 1;
+  const token = speechJobToken;
+  cancelSpeechPlayback();
+
+  try {
+    const serverSpeech = await requestServerSpeech(prepared);
+    if (serverSpeech && token === speechJobToken && speechEnabled) {
+      const played = await playServerSpeechAudio(
+        serverSpeech.audioBase64,
+        serverSpeech.mimeType,
+        token
+      );
+      if (played) {
+        return;
+      }
+    }
+  } catch (_) {
+    // Fall through to browser speech synthesis.
+  }
+
+  if (!("speechSynthesis" in window) || token !== speechJobToken || !speechEnabled) {
+    return;
+  }
+
+  const chunks = splitSpeechChunks(prepared);
+  if (!chunks.length) {
+    return;
+  }
+  speakBrowserChunks(chunks, token, 0);
 }
 
 function initRecognition() {
@@ -773,12 +1046,14 @@ async function sendMessage() {
     }
 
     addMessage("bot", data.response);
-    speakText(data.response);
+    void speakText(data.response);
 
     if (data.should_exit) {
       if (listening && useServerTranscription) {
         stopFallbackRecording(false);
       }
+      speechJobToken += 1;
+      cancelSpeechPlayback();
       micBtn.disabled = true;
       sendBtn.disabled = true;
       inputEl.disabled = true;
@@ -884,8 +1159,9 @@ if (voiceBtn) {
   voiceBtn.addEventListener("click", () => {
     speechEnabled = !speechEnabled;
     voiceBtn.textContent = `Voice Replies: ${speechEnabled ? "On" : "Off"}`;
-    if (!speechEnabled && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+    if (!speechEnabled) {
+      speechJobToken += 1;
+      cancelSpeechPlayback();
       setState("idle", "Voice replies are muted.");
     }
   });
@@ -901,6 +1177,8 @@ if (clearBtn) {
       }
     }
     messagesEl.innerHTML = "";
+    speechJobToken += 1;
+    cancelSpeechPlayback();
     networkErrorCount = 0;
     micLocked = false;
     micPausedUntil = 0;

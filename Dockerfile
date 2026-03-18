@@ -29,6 +29,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
     groq>=0.18.0 \
+    edge-tts>=6.1.12 \
     SpeechRecognition>=3.14.3 \
     requests>=2.32.5 \
     wikipedia>=1.4.0 \
@@ -62,4 +63,3 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "from voice_assistant.config import Config; Config.validate()" || exit 1
 
 ENTRYPOINT ["python", "scripts/run.py"]
-

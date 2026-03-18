@@ -110,7 +110,7 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 
 - Live chat panel for text interaction
 - Browser microphone input via Web Speech API
-- Spoken assistant replies via browser speech synthesis
+- Spoken assistant replies via server-side neural TTS (with browser voice fallback)
 - Dynamic glowing assistant orb with listening/speaking motion effects
 
 ### Run the Web UI
@@ -133,7 +133,7 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 ### Voice Notes for Web Mode
 
 - Microphone capture uses browser support (`SpeechRecognition` / `webkitSpeechRecognition`).
-- Spoken replies use browser `speechSynthesis` voices.
+- Spoken replies use server neural TTS first (`/api/speech/synthesize`), then fall back to browser `speechSynthesis` if needed.
 - For best voice support, use current Chrome or Edge.
 - If mic permission is blocked, you can still use full text chat.
 - `http://0.0.0.0:8000` is not a microphone-safe browser origin; use `127.0.0.1` or `localhost`.
@@ -257,10 +257,16 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `OPENWEATHER_API_KEY` | *(optional)* | OpenWeather API key for weather |
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
 | `AI_BACKEND` | `groq` | AI backend (`groq` or `huggingface`) |
-| `AI_MODEL` | `openai/gpt-oss-120b` | Model name for the AI backend |
+| `AI_MODEL` | `moonshotai/kimi-k2-instruct-0905` | Primary model name for the AI backend |
+| `AI_MODEL_FALLBACKS` | `qwen/qwen3-32b,llama-3.3-70b-versatile` | Comma-separated fallback model order if primary fails |
 | `STT_MODEL` | `whisper-large-v3` | Speech-to-text model for web fallback (`whisper-large-v3` or `whisper-large-v3-turbo`) |
 | `STT_LANGUAGE` | `en` | Language hint for fallback speech transcription |
 | `STT_PROMPT` | *(preset city-bias prompt)* | Optional prompt to improve recognition of names and places |
+| `WEB_TTS_BACKEND` | `edge` | Web speech output backend (`edge`, `browser`, or `auto`) |
+| `WEB_TTS_VOICE` | `en-US-AriaNeural` | Neural voice ID used when `WEB_TTS_BACKEND=edge` |
+| `WEB_TTS_RATE` | `+0%` | Neural TTS speaking rate |
+| `WEB_TTS_PITCH` | `+0Hz` | Neural TTS pitch |
+| `WEB_TTS_MAX_CHARS` | `900` | Max response text length accepted by `/api/speech/synthesize` |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `TTS_ENGINE` | `auto` | TTS engine (`auto` or `pyttsx3`) |
 | `LISTEN_TIMEOUT` | `8` | Speech recognition timeout (seconds) |

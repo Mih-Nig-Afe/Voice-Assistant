@@ -1,8 +1,19 @@
 """Tests for AI engine module."""
 
+import pytest
 from unittest.mock import patch, MagicMock
 
+from voice_assistant import ai_engine
+from voice_assistant.config import Config
 from voice_assistant.ai_engine import generate_response, is_available, get_backend_name
+
+
+@pytest.fixture(autouse=True)
+def reset_model_runtime_state() -> None:
+    """Reset per-process model health trackers between tests."""
+    ai_engine._MODEL_FAILURE_COUNTS.clear()
+    ai_engine._MODEL_EMPTY_COUNTS.clear()
+    ai_engine._MODEL_BLOCKLIST.clear()
 
 
 class TestAIEngine:
@@ -104,3 +115,25 @@ class TestAIEngine:
         result = generate_response("hello")
         assert "fallback response" in result.lower()
         assert mock_client.chat.completions.create.call_count == 2
+
+    @patch("voice_assistant.ai_engine._backend", "groq")
+    @patch("voice_assistant.ai_engine._initialized", True)
+    @patch("voice_assistant.ai_engine._groq_client")
+    def test_groq_blocks_tool_calling_primary_model_and_uses_fallback(self, mock_client):
+        tool_error = Exception(
+            "Error code: 400 - Tool choice is none, but model called a tool"
+        )
+        fallback = MagicMock()
+        fallback.choices = [MagicMock(message=MagicMock(content="Fallback answer"))]
+        mock_client.chat.completions.create.side_effect = [tool_error, fallback]
+
+        result = generate_response("weather")
+        assert "fallback answer" in result.lower()
+        assert Config.AI_MODEL in ai_engine._MODEL_BLOCKLIST
+
+        second_response = MagicMock()
+        second_response.choices = [MagicMock(message=MagicMock(content="Second answer"))]
+        mock_client.chat.completions.create.side_effect = [second_response]
+        second = generate_response("another question")
+        assert "second answer" in second.lower()
+        assert mock_client.chat.completions.create.call_count == 3

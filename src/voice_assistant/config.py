@@ -43,6 +43,11 @@ class Config:
     TTS_ENGINE: str = os.getenv("TTS_ENGINE", "auto")
     TTS_RATE: int = int(os.getenv("TTS_RATE", "160"))
     TTS_VOLUME: float = float(os.getenv("TTS_VOLUME", "1.0"))
+    WEB_TTS_BACKEND: str = os.getenv("WEB_TTS_BACKEND", "edge")
+    WEB_TTS_VOICE: str = os.getenv("WEB_TTS_VOICE", "en-US-AriaNeural")
+    WEB_TTS_RATE: str = os.getenv("WEB_TTS_RATE", "+0%")
+    WEB_TTS_PITCH: str = os.getenv("WEB_TTS_PITCH", "+0Hz")
+    WEB_TTS_MAX_CHARS: int = int(os.getenv("WEB_TTS_MAX_CHARS", "900"))
 
     # Speech recognition
     LISTEN_TIMEOUT: int = int(os.getenv("LISTEN_TIMEOUT", "8"))
@@ -60,7 +65,11 @@ class Config:
 
     # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
     AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
-    AI_MODEL: str = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
+    AI_MODEL: str = os.getenv("AI_MODEL", "moonshotai/kimi-k2-instruct-0905")
+    AI_MODEL_FALLBACKS: str = os.getenv(
+        "AI_MODEL_FALLBACKS",
+        "qwen/qwen3-32b,llama-3.3-70b-versatile",
+    )
     AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
     AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))
 
@@ -129,6 +138,18 @@ class Config:
             warnings.append(
                 "INTERACTION_MODE must be one of: auto, voice, text. Falling back to auto."
             )
+
+        web_tts_backend = cls.WEB_TTS_BACKEND.strip().lower()
+        if web_tts_backend not in {"edge", "browser", "auto"}:
+            warnings.append(
+                "WEB_TTS_BACKEND must be one of: edge, browser, auto. Falling back to edge."
+            )
+            cls.WEB_TTS_BACKEND = "edge"
+        if cls.WEB_TTS_MAX_CHARS < 200:
+            warnings.append(
+                "WEB_TTS_MAX_CHARS must be at least 200. Falling back to 900."
+            )
+            cls.WEB_TTS_MAX_CHARS = 900
 
         if cls.HTTP_TIMEOUT <= 0:
             warnings.append("HTTP_TIMEOUT must be > 0. Falling back to 10 seconds.")

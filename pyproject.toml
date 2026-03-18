@@ -28,6 +28,7 @@ dependencies = [
     "SpeechRecognition>=3.14.3",
     "pyttsx3>=2.99",
     "groq>=0.18.0",
+    "edge-tts>=6.1.12",
     "requests>=2.32.5",
     "wikipedia>=1.4.0",
     "playsound3>=3.2.8",
@@ -70,4 +71,3 @@ warn_unused_configs = true
 [tool.flake8]
 max-line-length = 120
 exclude = [".git", "__pycache__", "build", "dist"]
-

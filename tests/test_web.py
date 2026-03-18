@@ -1,5 +1,5 @@
 import base64
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -141,3 +141,34 @@ def test_web_transcribe_endpoint_returns_empty_for_tiny_audio() -> None:
     assert response.status_code == 200
     assert response.json() == {"transcript": ""}
     mocked.assert_not_called()
+
+
+def test_web_synthesize_endpoint_returns_audio() -> None:
+    client = TestClient(app)
+    sample = b"\x00\x01\x02\x03"
+    with patch(
+        "voice_assistant.web._synthesize_text_audio_bytes",
+        new=AsyncMock(return_value=sample),
+    ) as mocked:
+        response = client.post("/api/speech/synthesize", json={"text": "hello there"})
+    assert response.status_code == 200
+    assert response.json()["audio_base64"] == base64.b64encode(sample).decode("ascii")
+    assert response.json()["mime_type"] == "audio/mpeg"
+    mocked.assert_awaited_once_with("hello there")
+
+
+def test_web_synthesize_endpoint_rejects_empty_text() -> None:
+    client = TestClient(app)
+    response = client.post("/api/speech/synthesize", json={"text": "   "})
+    assert response.status_code == 400
+    assert "empty" in response.json()["detail"].lower()
+
+
+def test_web_synthesize_endpoint_returns_503_on_runtime_unavailable() -> None:
+    client = TestClient(app)
+    with patch(
+        "voice_assistant.web._synthesize_text_audio_bytes",
+        new=AsyncMock(side_effect=RuntimeError("tts disabled")),
+    ):
+        response = client.post("/api/speech/synthesize", json={"text": "hello"})
+    assert response.status_code == 503

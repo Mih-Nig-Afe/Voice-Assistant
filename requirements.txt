@@ -12,6 +12,7 @@ psutil>=5.9.8
 
 # AI Backend (Groq — free tier, primary)
 groq>=0.18.0
+edge-tts>=6.1.12
 
 # AI Backend (HuggingFace — local fallback, optional)
 # Uncomment if you want local AI without an API key:
@@ -26,4 +27,3 @@ uvicorn>=0.35.0
 
 # Development dependencies (install with: pip install -r requirements-dev.txt)
 # Or use: pip install -e ".[dev]"
-

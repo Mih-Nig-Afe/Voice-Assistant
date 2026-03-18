@@ -11,6 +11,7 @@ Why Groq?
 - Sub-second inference (LPU hardware)
 """
 
+import re
 from typing import Optional
 
 from voice_assistant.config import Config
@@ -35,6 +36,87 @@ _SYSTEM_PROMPT = (
     "Be accurate, conversational, and honest when uncertain."
 )
 _AI_MODEL_HARD_FALLBACK = "llama-3.3-70b-versatile"
+_MODEL_FAILURE_COUNTS: dict[str, int] = {}
+_MODEL_EMPTY_COUNTS: dict[str, int] = {}
+_MODEL_BLOCKLIST: set[str] = set()
+
+
+def _clean_generated_text(text: str) -> str:
+    """Normalize model output for cleaner spoken responses."""
+    clean = (text or "").strip()
+    if not clean:
+        return ""
+
+    # Remove hidden reasoning tags some models may emit.
+    clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.IGNORECASE | re.DOTALL)
+    clean = re.sub(r"</?analysis>", "", clean, flags=re.IGNORECASE)
+    clean = clean.strip()
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean
+
+
+def _is_tool_mismatch_error(exc: Exception) -> bool:
+    """Return True if model tried unsupported tool-calling behavior."""
+    message = str(exc).lower()
+    return "tool_use_failed" in message or "tool choice is none, but model called a tool" in message
+
+
+def _record_model_error(model_name: str, exc: Exception) -> None:
+    """Track model errors and block unstable models after repeated failures."""
+    if model_name == _AI_MODEL_HARD_FALLBACK:
+        return
+    _MODEL_FAILURE_COUNTS[model_name] = _MODEL_FAILURE_COUNTS.get(model_name, 0) + 1
+    if _is_tool_mismatch_error(exc):
+        _MODEL_BLOCKLIST.add(model_name)
+        logger.warning(
+            "Model '%s' disabled for this runtime due to incompatible tool-calling behavior.",
+            model_name,
+        )
+        return
+    if _MODEL_FAILURE_COUNTS[model_name] >= 3:
+        _MODEL_BLOCKLIST.add(model_name)
+        logger.warning(
+            "Model '%s' disabled for this runtime after repeated API failures.",
+            model_name,
+        )
+
+
+def _record_model_empty(model_name: str) -> None:
+    """Track empty responses and block models that repeatedly return blanks."""
+    if model_name == _AI_MODEL_HARD_FALLBACK:
+        return
+    _MODEL_EMPTY_COUNTS[model_name] = _MODEL_EMPTY_COUNTS.get(model_name, 0) + 1
+    if _MODEL_EMPTY_COUNTS[model_name] >= 3:
+        _MODEL_BLOCKLIST.add(model_name)
+        logger.warning(
+            "Model '%s' disabled for this runtime after repeated empty responses.",
+            model_name,
+        )
+
+
+def _record_model_success(model_name: str) -> None:
+    """Clear transient failure counters after a successful response."""
+    _MODEL_FAILURE_COUNTS.pop(model_name, None)
+    _MODEL_EMPTY_COUNTS.pop(model_name, None)
+
+
+def _get_model_candidates() -> list[str]:
+    """Build ordered unique model candidate list honoring configured fallbacks."""
+    candidates: list[str] = []
+    primary = (Config.AI_MODEL or "").strip()
+    if primary:
+        candidates.append(primary)
+    configured_fallbacks = [
+        model.strip()
+        for model in (Config.AI_MODEL_FALLBACKS or "").split(",")
+        if model.strip()
+    ]
+    for model in configured_fallbacks:
+        if model not in candidates:
+            candidates.append(model)
+    if _AI_MODEL_HARD_FALLBACK not in candidates:
+        candidates.append(_AI_MODEL_HARD_FALLBACK)
+    return [model for model in candidates if model and model not in _MODEL_BLOCKLIST]
 
 
 def _init_groq() -> bool:
@@ -136,9 +218,9 @@ def _generate_groq(
             messages.extend(history[-Config.AI_MAX_HISTORY :])
         messages.append({"role": "user", "content": prompt})
 
-        model_candidates = [Config.AI_MODEL]
-        if Config.AI_MODEL != _AI_MODEL_HARD_FALLBACK:
-            model_candidates.append(_AI_MODEL_HARD_FALLBACK)
+        model_candidates = _get_model_candidates()
+        if not model_candidates:
+            model_candidates = [_AI_MODEL_HARD_FALLBACK]
 
         last_error = None
         for model_name in model_candidates:
@@ -150,8 +232,9 @@ def _generate_groq(
                     temperature=0.4,
                 )
                 content = response.choices[0].message.content if response.choices else ""
-                text = (content or "").strip()
+                text = _clean_generated_text(content or "")
                 if text:
+                    _record_model_success(model_name)
                     if model_name != Config.AI_MODEL:
                         logger.warning(
                             "Primary model '%s' failed/empty; using fallback '%s'.",
@@ -161,12 +244,14 @@ def _generate_groq(
                     logger.debug("Groq response (%d chars) [model=%s]", len(text), model_name)
                     return text
                 last_error = RuntimeError("empty response body")
+                _record_model_empty(model_name)
                 logger.warning(
                     "Groq model '%s' returned empty response. Trying fallback model if available.",
                     model_name,
                 )
             except Exception as model_exc:
                 last_error = model_exc
+                _record_model_error(model_name, model_exc)
                 logger.error("Groq model '%s' error: %s", model_name, model_exc)
 
         logger.warning("Groq failed across candidate models. Last error: %s", last_error)
@@ -193,7 +278,7 @@ def _generate_huggingface(prompt: str) -> str:
         response = _hf_generator(
             prompt, max_length=Config.AI_MAX_LENGTH, num_return_sequences=1
         )
-        text: str = response[0].get("generated_text", "").strip()
+        text: str = _clean_generated_text(response[0].get("generated_text", ""))
         if not text:
             return "I couldn't generate a response just now."
         logger.debug("HuggingFace response (%d chars)", len(text))

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.12] - 2026-03-18
+
+### Fixed
+
+- Added server-side neural speech synthesis endpoint (`/api/speech/synthesize`) using `edge-tts`, with frontend playback support and browser-speech fallback.
+- Improved spoken reply naturalness via neural voice output, voice chunking, and safer playback cancellation handling.
+- Added runtime model-health tracking that blocks unstable Groq models (for example tool-call-incompatible responses) after repeated failures.
+- Updated default Groq primary model to `moonshotai/kimi-k2-instruct-0905` and added configurable fallback chain (`AI_MODEL_FALLBACKS`).
+
+### Tested
+
+- Added web endpoint tests for speech synthesis success, empty text validation, and unavailable-backend handling.
+- Added AI-engine test coverage for tool-call-incompatible primary model failover and runtime blocklisting behavior.
+
 ## [1.2.11] - 2026-03-18
 
 ### Fixed
