@@ -1,6 +1,6 @@
-# Security Guidelines
+# Security Guide
 
-This is a public repository. Keep credentials out of source control and build contexts.
+This repository is public. Keep credentials out of source control and Docker build contexts.
 
 ## Secrets Policy
 
@@ -27,21 +27,21 @@ This is a public repository. Keep credentials out of source control and build co
 
 ### Groq
 
-1. Open https://console.groq.com/keys
+1. Open [console.groq.com/keys](https://console.groq.com/keys)
 2. Revoke/delete the exposed key.
 3. Create a new key.
 4. Paste the new value into local `.env` as `GROQ_API_KEY=...`.
 
 ### OpenWeather
 
-1. Open https://home.openweathermap.org/api_keys
+1. Open [home.openweathermap.org/api_keys](https://home.openweathermap.org/api_keys)
 2. Disable or delete the exposed key.
 3. Create/regenerate a new key.
 4. Paste the new value into local `.env` as `OPENWEATHER_API_KEY=...`.
 
 ### GNews
 
-1. Open https://gnews.io/dashboard
+1. Open [gnews.io/dashboard](https://gnews.io/dashboard)
 2. Revoke/regenerate the exposed key.
 3. Paste the new value into local `.env` as `GNEWS_API_KEY=...`.
 

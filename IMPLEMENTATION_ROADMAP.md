@@ -1,153 +1,45 @@
-# Implementation Roadmap — Voice Assistant (Miehab)
+# Implementation Roadmap - Voice Assistant (Miehab)
 
-> **Created:** 2026-03-16
-> **Target Completion:** Phase 1-3 implemented in this session
+> Status: Historical implementation record.
+> Last reviewed: 2026-03-18.
+> Current source of truth: README.md and CHANGELOG.md.
 
----
+## Purpose
 
-## Phase 1: Foundation & Security Fixes ✅
-**Priority:** Critical | **Timeline:** Immediate
+This file preserves the original implementation phases used during the first project modernization pass. It is kept for historical context.
 
-### Tasks
-- [x] Revoke/externalize hardcoded API key → `.env` + `python-dotenv`
-- [x] Fix hardcoded Windows file paths → relative `os.path` resolution
-- [x] Create `.gitignore` with Python defaults
-- [x] Create `.env.example` with required environment variables
-- [x] Create `requirements.txt` with pinned dependency versions
-- [x] Create `pyproject.toml` for proper packaging
+## Historical Milestones
 
-### Validation
-- `.env` is in `.gitignore`
-- No secrets in tracked files
-- `pip install -r requirements.txt` succeeds
+### Phase 1: Foundation and Security
 
----
+- Moved secrets to environment variables.
+- Added .env.example and secret-safe ignore rules.
+- Added packaging and dependency baseline files.
 
-## Phase 2: Project Restructuring ✅
-**Priority:** High | **Timeline:** Immediate (depends on Phase 1)
+### Phase 2: Project Restructuring
 
-### New Directory Structure
-```
-Voice-Assistant/
-├── src/
-│   └── voice_assistant/
-│       ├── __init__.py          # Package init with version
-│       ├── config.py            # Configuration management
-│       ├── logging_config.py    # Logging setup
-│       ├── speech.py            # Speech recognition module
-│       ├── tts.py               # Text-to-speech module
-│       ├── ai_engine.py         # AI response generation
-│       ├── weather.py           # Weather API integration
-│       ├── wiki.py              # Wikipedia integration
-│       ├── commands.py          # Command registry & routing
-│       └── assistant.py         # Main assistant orchestrator
-├── tests/
-│   ├── __init__.py
-│   ├── test_config.py
-│   ├── test_weather.py
-│   ├── test_wiki.py
-│   ├── test_ai_engine.py
-│   └── test_commands.py
-├── config/
-│   └── default.yaml             # Default configuration values
-├── sounds/
-│   ├── start_beep.wav
-│   └── stop_beep.wav
-├── scripts/
-│   └── run.py                   # Entry point script
-├── .github/
-│   └── workflows/
-│       ├── ci.yml               # Consolidated CI pipeline
-│       └── publish.yml          # PyPI publish (cleaned up)
-├── .env.example
-├── .gitignore
-├── LICENSE
-├── README.md
-├── IMPROVEMENT_PLAN.md
-├── IMPLEMENTATION_ROADMAP.md
-├── pyproject.toml
-└── requirements.txt
-```
+- Migrated to src/voice_assistant package layout.
+- Split monolithic logic into focused modules.
+- Added script entry points and default config layout.
 
-### Tasks
-- [x] Create directory structure with `__init__.py` files
-- [x] Extract speech recognition → `src/voice_assistant/speech.py`
-- [x] Extract TTS → `src/voice_assistant/tts.py`
-- [x] Extract AI engine → `src/voice_assistant/ai_engine.py`
-- [x] Extract weather → `src/voice_assistant/weather.py`
-- [x] Extract Wikipedia → `src/voice_assistant/wiki.py`
-- [x] Create command registry → `src/voice_assistant/commands.py`
-- [x] Create config management → `src/voice_assistant/config.py`
-- [x] Create logging config → `src/voice_assistant/logging_config.py`
-- [x] Create assistant orchestrator → `src/voice_assistant/assistant.py`
-- [x] Create entry point → `scripts/run.py`
-- [x] Rename `sounds1/` → `sounds/` with clean filenames
+### Phase 3: Code Quality
 
-### Validation
-- `python scripts/run.py` launches the assistant
-- All imports resolve correctly
-- No circular dependencies
+- Introduced logging, typing, and module-level docstrings.
+- Standardized command routing and service modules.
+- Stabilized cross-platform behavior for speech and runtime modes.
 
----
+### Phase 4: Testing Expansion
 
-## Phase 3: Code Quality & Best Practices ✅
-**Priority:** High | **Timeline:** Immediate (depends on Phase 2)
+- Added dedicated test suite under tests/.
+- Expanded regression coverage for web, weather, and news behavior.
 
-### Tasks
-- [x] Add type hints to all functions
-- [x] Add docstrings to all modules and public functions
-- [x] Replace `print()` with `logging` module
-- [x] Fix Wikipedia case-sensitivity bug
-- [x] Add input validation for weather city names
-- [x] Use `requests.get(params=...)` instead of f-string URLs
-- [x] Make `win32com` import conditional on platform
-- [x] Consolidate 5 GitHub Actions into 2 workflows
-- [x] Update action versions to latest (`@v5`)
+### Phase 5: Ongoing Enhancements
 
-### Validation
-- `flake8` passes with 0 errors
-- `mypy` reports no critical issues
-- All logging uses proper levels
+- Continuous conversational quality improvements.
+- Better fallback behavior for external providers.
+- Documentation and operational hardening.
 
----
+## Notes
 
-## Phase 4: Testing (Scaffolding Created)
-**Priority:** Medium | **Timeline:** Next iteration
-
-### Tasks
-- [x] Create test scaffolding for all modules
-- [ ] Achieve >70% unit test coverage
-- [ ] Add integration tests with mocked audio
-- [ ] Add CI test execution
-
-### Validation
-- `pytest` runs and passes
-- Coverage report generated
-
----
-
-## Phase 5: Future Enhancements (Planned)
-**Priority:** Low | **Timeline:** Future iterations
-
-### Tasks
-- [ ] Lazy-load AI model on first use
-- [ ] Add conversation memory/context
-- [ ] Implement command plugin system
-- [ ] Add graceful shutdown with signal handlers
-- [ ] Create simple settings UI
-- [ ] Multi-language support
-
----
-
-## Dependency Graph
-
-```
-Phase 1 (Security) ──→ Phase 2 (Restructure) ──→ Phase 3 (Quality)
-                                                       │
-                                                       ↓
-                                                  Phase 4 (Tests)
-                                                       │
-                                                       ↓
-                                                  Phase 5 (Features)
-```
-
+- Original checklists were condensed to avoid stale status drift.
+- Use CHANGELOG.md for release-by-release details and test status.

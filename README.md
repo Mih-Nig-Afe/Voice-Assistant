@@ -1,4 +1,4 @@
-# AI-Powered Voice Assistant — Miehab
+# AI-Powered Voice Assistant - Miehab
 
 Miehab is an interactive AI-driven voice assistant that combines speech recognition, text-to-speech, and AI-based natural language processing for hands-free interaction. It provides dynamic responses, weather updates, Wikipedia summaries, and more.
 
@@ -8,7 +8,7 @@ Miehab is an interactive AI-driven voice assistant that combines speech recognit
 
 - **Voice Interaction** — Listens and responds to user queries using speech recognition
 - **Text-to-Speech** — Cross-platform TTS with automatic engine selection
-- **AI-Powered Responses** — Intelligent replies via GPT-Neo (HuggingFace Transformers)
+- **AI-Powered Responses** — Intelligent replies via Groq-hosted models with HuggingFace fallback
 - **Weather Updates** — Real-time weather data from OpenWeather API
 - **Wikipedia Integration** — Topic summaries with disambiguation handling
 - **Audio Feedback** — Customizable beep sounds for listening state indicators
@@ -28,23 +28,27 @@ Miehab is an interactive AI-driven voice assistant that combines speech recognit
 ### Installation
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/Mih-Nig-Afe/Voice-Assistant.git
    cd Voice-Assistant
    ```
 
 2. **Install dependencies:**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **Configure environment:**
+
    ```bash
    cp .env.example .env
    # Edit .env and add your OPENWEATHER_API_KEY
    ```
 
 4. **Run the assistant:**
+
    ```bash
    python scripts/run.py
    ```
@@ -71,8 +75,8 @@ docker compose run --rm miehab
 # Docker Compose service mode (starts the web frontend)
 docker compose up --build
 
-# Open the web UI
-http://127.0.0.1:8000
+# Open the web UI in your browser
+open http://127.0.0.1:8000
 
 # Note: docker-compose.yml now starts scripts/run_web.py by default.
 ```
@@ -95,11 +99,13 @@ python scripts/run.py
 ```
 
 Expected startup logs for voice mode:
+
 - `interaction_mode=voice`
 - `Input mode initialized: voice`
 - `TTS initialized: pyttsx3` (or platform TTS backend)
 
 If you still get text mode locally:
+
 - Grant microphone permission to your terminal/Python app in OS privacy settings.
 - Install/verify PyAudio in your local environment.
 - Confirm your microphone is visible to the OS.
@@ -116,17 +122,20 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 ### Run the Web UI
 
 1. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 2. Start the web server:
+
    ```bash
    python scripts/run_web.py
    ```
 
 3. Open in your browser:
-   ```
+
+   ```text
    http://127.0.0.1:8000
    ```
 
@@ -161,13 +170,14 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for upgrade notes, fixes, and release history.
+See [CHANGELOG.md](CHANGELOG.md) for release notes, fixes, and test status.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for secret handling policy, rotation steps, and public-repo hygiene.
+See [SECURITY.md](SECURITY.md) for secret handling policy, rotation steps, and repository hygiene.
 
 Quick rules:
+
 - Keep real keys only in local `.env` and CI secret stores.
 - Never commit `.env` or certificate/private key files.
 - Rotate keys immediately if exposure is suspected.
@@ -181,7 +191,7 @@ Quick rules:
 ### Example Commands
 
 | Command | Action |
-|---|---|
+| --- | --- |
 | "What's the weather in Addis Ababa?" | Fetches current weather |
 | "Tell me about artificial intelligence" | Wikipedia summary |
 | "What's the latest news?" | Top news headlines |
@@ -195,36 +205,40 @@ Quick rules:
 | "Battery status" | Battery level |
 | "Help" | List all commands |
 | "Clear history" | Reset conversation memory |
-| "How are you today?" | AI conversation (Groq/Llama 3.3) |
+| "How are you today?" | AI conversation (Groq/Kimi with fallbacks) |
 | "Bye" / "Goodbye" | Exit the assistant |
 
 ---
 
 ## Project Structure
 
-```
+```text
 Voice-Assistant/
-├── src/voice_assistant/       # Main package (13 modules)
+├── src/voice_assistant/       # Main package (19 Python modules + frontend assets)
 │   ├── __init__.py            # Package metadata
+│   ├── ai_engine.py           # AI backend (Groq + HuggingFace fallback)
 │   ├── assistant.py           # Main orchestrator & command registration
+│   ├── calculator.py          # Safe math expression evaluator
 │   ├── commands.py            # Command registry & routing engine
 │   ├── config.py              # Configuration management
-│   ├── logging_config.py      # Structured logging setup
 │   ├── conversation.py        # Multi-turn conversation memory
-│   ├── speech.py              # Speech recognition module
-│   ├── tts.py                 # Cross-platform text-to-speech
-│   ├── ai_engine.py           # AI backend (Groq + HuggingFace fallback)
-│   ├── weather.py             # OpenWeather API integration
-│   ├── wiki.py                # Wikipedia integration
-│   ├── news.py                # News headlines (GNews + RSS fallback)
-│   ├── jokes.py               # Joke fetching (JokeAPI)
-│   ├── dictionary.py          # Word definitions (Free Dictionary API)
-│   ├── calculator.py          # Safe math expression evaluator
 │   ├── datetime_cmd.py        # Date/time commands
-│   └── system_info.py         # System information reporter
-├── tests/                     # Comprehensive unit tests (12 test files)
+│   ├── dictionary.py          # Word definitions (Free Dictionary API)
+│   ├── jokes.py               # Joke fetching (JokeAPI)
+│   ├── logging_config.py      # Structured logging setup
+│   ├── news.py                # News headlines (GNews + RSS fallback)
+│   ├── runtime.py             # Runtime interaction mode detection
+│   ├── speech.py              # Speech recognition module
+│   ├── system_info.py         # System information reporter
+│   ├── tts.py                 # Cross-platform text-to-speech
+│   ├── weather.py             # OpenWeather API integration
+│   ├── web.py                 # FastAPI web backend and API routes
+│   ├── wiki.py                # Wikipedia integration
+│   └── frontend/              # Browser UI assets (HTML/CSS/JS)
+├── tests/                     # Comprehensive unit tests (13 test files)
 ├── config/default.yaml        # Default configuration values
 ├── scripts/run.py             # Entry point script
+├── scripts/run_web.py         # Web server entry point script
 ├── sounds/                    # Audio feedback files
 ├── .env.example               # Environment variable template
 ├── requirements.txt           # Python dependencies
@@ -238,17 +252,20 @@ Voice-Assistant/
 ## Development
 
 ### Running Tests
+
 ```bash
 pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
 ### Linting
+
 ```bash
 flake8 src/ tests/ --max-line-length=120
 ```
 
 ### Type Checking
+
 ```bash
 mypy src/voice_assistant/ --ignore-missing-imports
 ```
@@ -260,7 +277,7 @@ mypy src/voice_assistant/ --ignore-missing-imports
 Configuration is managed through environment variables (`.env` file) with sensible defaults.
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `GROQ_API_KEY` | *(required)* | Groq API key for AI conversations |
 | `OPENWEATHER_API_KEY` | *(optional)* | OpenWeather API key for weather |
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
@@ -283,9 +300,10 @@ See `.env.example` for the full list of configurable options.
 
 ---
 
-## API Setup Guide (All Free — No Credit Card Required)
+## API Setup Guide (All Free - No Credit Card Required)
 
-### 1. Groq API (AI Conversations) — **Recommended, Required for best experience**
+### 1. Groq API (AI Conversations) - **Recommended, Required for Best Experience**
+
 - **URL:** [https://console.groq.com](https://console.groq.com)
 - **What it does:** Powers intelligent AI conversations using modern Groq-hosted large models (default: Kimi K2 Instruct)
 - **How to get a key:**
@@ -297,6 +315,7 @@ See `.env.example` for the full list of configurable options.
 - **Why Groq?** Fast low-latency LLM API with multiple strong model options and easy fallback chaining
 
 ### 2. OpenWeather API (Weather)
+
 - **URL:** [https://openweathermap.org/api](https://openweathermap.org/api)
 - **What it does:** Provides current weather data for any city worldwide
 - **How to get a key:**
@@ -307,7 +326,8 @@ See `.env.example` for the full list of configurable options.
   5. **Note:** New keys take ~10 minutes to activate
 - **Free tier limits:** 1,000 API calls/day, 60 calls/min
 
-### 3. GNews API (News Headlines) — *Optional*
+### 3. GNews API (News Headlines) - *Optional*
+
 - **URL:** [https://gnews.io](https://gnews.io)
 - **What it does:** Fetches latest news headlines and topic-based news
 - **How to get a key:**
@@ -318,10 +338,11 @@ See `.env.example` for the full list of configurable options.
 - **Fallback:** If no key is set, Miehab uses Google News RSS feed (unlimited, no key needed)
 
 ### 4. Free APIs That Need No Key
+
 These APIs are used by Miehab and require **no signup or API key**:
 
 | Service | API | Used For |
-|---|---|---|
+| --- | --- | --- |
 | **JokeAPI** | [v2.jokeapi.dev](https://v2.jokeapi.dev) | Random jokes (120 req/min) |
 | **Free Dictionary** | [dictionaryapi.dev](https://dictionaryapi.dev) | Word definitions (unlimited) |
 | **Google News RSS** | news.google.com/rss | News fallback (unlimited) |

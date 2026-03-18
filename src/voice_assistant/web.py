@@ -37,7 +37,7 @@ logger = get_logger("web")
 
 _FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
 
-app = FastAPI(title="Miehab Web Assistant", version="1.0.0")
+app = FastAPI(title="Miehab Web Assistant", version="1.2.19")
 app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 _pending_weather_city: bool = False
