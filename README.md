@@ -137,8 +137,9 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - For best voice support, use current Chrome or Edge.
 - If mic permission is blocked, you can still use full text chat.
 - `http://0.0.0.0:8000` is not a microphone-safe browser origin; use `127.0.0.1` or `localhost`.
-- If browser speech shows repeated `network` errors, Miehab now switches to built-in recording mode and transcribes audio through the backend.
+- If browser speech reports a `network` failure, Miehab now switches immediately to built-in recording mode and transcribes audio through the backend.
 - In fallback mode, tap mic once to start recording and tap again (or wait ~7 seconds) to submit speech for transcription.
+- News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
 
 ### Docker Input Troubleshooting
 
@@ -256,7 +257,10 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `OPENWEATHER_API_KEY` | *(optional)* | OpenWeather API key for weather |
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
 | `AI_BACKEND` | `groq` | AI backend (`groq` or `huggingface`) |
-| `AI_MODEL` | `llama-3.3-70b-versatile` | Model name for the AI backend |
+| `AI_MODEL` | `openai/gpt-oss-120b` | Model name for the AI backend |
+| `STT_MODEL` | `whisper-large-v3` | Speech-to-text model for web fallback (`whisper-large-v3` or `whisper-large-v3-turbo`) |
+| `STT_LANGUAGE` | `en` | Language hint for fallback speech transcription |
+| `STT_PROMPT` | *(preset city-bias prompt)* | Optional prompt to improve recognition of names and places |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `TTS_ENGINE` | `auto` | TTS engine (`auto` or `pyttsx3`) |
 | `LISTEN_TIMEOUT` | `8` | Speech recognition timeout (seconds) |

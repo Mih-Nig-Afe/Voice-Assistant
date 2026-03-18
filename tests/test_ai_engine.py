@@ -89,4 +89,18 @@ class TestAIEngine:
         """Should handle Groq API errors gracefully."""
         mock_client.chat.completions.create.side_effect = Exception("API Error")
         result = generate_response("hello")
-        assert "trouble" in result.lower() or "try again" in result.lower()
+        assert "response right now" in result.lower() or "try again" in result.lower()
+
+    @patch("voice_assistant.ai_engine._backend", "groq")
+    @patch("voice_assistant.ai_engine._initialized", True)
+    @patch("voice_assistant.ai_engine._groq_client")
+    def test_groq_falls_back_to_secondary_model_on_empty_primary(self, mock_client):
+        first = MagicMock()
+        first.choices = [MagicMock(message=MagicMock(content=""))]
+        second = MagicMock()
+        second.choices = [MagicMock(message=MagicMock(content="Fallback response"))]
+        mock_client.chat.completions.create.side_effect = [first, second]
+
+        result = generate_response("hello")
+        assert "fallback response" in result.lower()
+        assert mock_client.chat.completions.create.call_count == 2

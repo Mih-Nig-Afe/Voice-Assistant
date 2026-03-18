@@ -47,10 +47,20 @@ class Config:
     # Speech recognition
     LISTEN_TIMEOUT: int = int(os.getenv("LISTEN_TIMEOUT", "8"))
     PHRASE_TIME_LIMIT: int = int(os.getenv("PHRASE_TIME_LIMIT", "12"))
+    STT_MODEL: str = os.getenv("STT_MODEL", "whisper-large-v3")
+    STT_LANGUAGE: str = os.getenv("STT_LANGUAGE", "en")
+    STT_PROMPT: str = os.getenv(
+        "STT_PROMPT",
+        (
+            "Transcribe spoken assistant requests clearly. "
+            "Common city names may include Addis Ababa, Hawassa, Shashamane, "
+            "Adama, Dire Dawa, and Bahir Dar."
+        ),
+    )
 
     # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
     AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
-    AI_MODEL: str = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+    AI_MODEL: str = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
     AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
     AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))
 
@@ -137,6 +147,14 @@ class Config:
                 "PHRASE_TIME_LIMIT must be > 0. Falling back to 12 seconds."
             )
             cls.PHRASE_TIME_LIMIT = 12
+        if cls.STT_MODEL.strip() not in {"whisper-large-v3", "whisper-large-v3-turbo"}:
+            warnings.append(
+                "STT_MODEL must be whisper-large-v3 or whisper-large-v3-turbo. Falling back to whisper-large-v3."
+            )
+            cls.STT_MODEL = "whisper-large-v3"
+        if not cls.STT_LANGUAGE.strip():
+            warnings.append("STT_LANGUAGE is empty. Falling back to 'en'.")
+            cls.STT_LANGUAGE = "en"
 
         if not cls._is_valid_secret(cls.OPENWEATHER_API_KEY):
             warnings.append(

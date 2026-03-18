@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.11] - 2026-03-18
+
+### Fixed
+
+- Improved news intent parsing so natural phrases like `tell me your news` route to general headlines instead of malformed topic filters.
+- Added news-topic normalization for natural language phrasing (for example `what's the latest news about technology`).
+- Added fallback behavior to retry general headlines when topic-filtered news returns no articles.
+- Changed default conversational model to `openai/gpt-oss-120b` for stronger dialogue quality on Groq.
+
+### Tested
+
+- Added web/news tests covering generic news phrases, topic extraction, and topic-empty fallback behavior.
+
+## [1.2.10] - 2026-03-18
+
+### Fixed
+
+- Improved weather city extraction for noisy voice follow-ups (for example phrases like `for shashamani` now normalize to `shashamani`).
+- Upgraded fallback speech transcription default to `whisper-large-v3` for better recognition quality.
+- Added configurable speech-to-text settings (`STT_MODEL`, `STT_LANGUAGE`, `STT_PROMPT`) and wired them into Groq transcription requests.
+- Improved AI response system prompt for better intent inference from imperfect transcripts and more direct answers.
+
+### Tested
+
+- Added weather/transcription-oriented web tests and kept full suite passing.
+
+## [1.2.9] - 2026-03-18
+
+### Fixed
+
+- Removed browser-speech network cooldown lockout flow that could keep voice input blocked.
+- Switched browser speech `network` failures to immediate built-in recording fallback.
+- Added WebAudio WAV capture fallback so backend transcription still works when `MediaRecorder` is unavailable.
+- Added no-store cache headers for `/` and `/static/*` to reduce stale frontend JS after redeploys.
+
+### Tested
+
+- Added static asset cache-header coverage in web tests.
+
 ## [1.2.8] - 2026-03-18
 
 ### Fixed

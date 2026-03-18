@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from voice_assistant.weather import _validate_city, get_weather
+from voice_assistant.weather import _normalize_city_alias, _validate_city, get_weather
 
 
 class TestValidateCity:
@@ -28,6 +28,9 @@ class TestValidateCity:
 
     def test_special_chars_rejected(self):
         assert _validate_city("City;DROP TABLE") is False
+
+    def test_city_alias_mapping(self):
+        assert _normalize_city_alias("shashamani") == "shashemene"
 
 
 class TestGetWeather:
@@ -78,3 +81,23 @@ class TestGetWeather:
         result = get_weather("'; DROP TABLE--", api_key="test_key")
         assert "valid city" in result.lower()
 
+    @patch("voice_assistant.weather.requests.get")
+    def test_city_not_found_retries_with_et_country_hint(self, mock_get):
+        first = MagicMock()
+        first.status_code = 404
+        first.json.return_value = {"cod": 404, "message": "city not found"}
+
+        second = MagicMock()
+        second.status_code = 200
+        second.json.return_value = {
+            "cod": 200,
+            "weather": [{"description": "clear sky"}],
+            "main": {"temp": 21.0, "feels_like": 20.0},
+        }
+
+        mock_get.side_effect = [first, second]
+        result = get_weather("shashamani", api_key="test_key")
+        assert "clear sky" in result
+        assert mock_get.call_count == 2
+        second_call_params = mock_get.call_args_list[1].kwargs["params"]
+        assert second_call_params["q"].endswith(",ET")

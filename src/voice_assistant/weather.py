@@ -18,6 +18,11 @@ logger = get_logger("weather")
 
 # Simple pattern: allow letters, spaces, hyphens, apostrophes
 _VALID_CITY_PATTERN = re.compile(r"^[a-zA-Z](?:[a-zA-Z\s\-'\.]*[a-zA-Z])?$")
+_CITY_ALIASES = {
+    "shashamani": "shashemene",
+    "shashamane": "shashemene",
+    "nazret": "adama",
+}
 
 
 def _validate_city(city: str) -> bool:
@@ -31,6 +36,12 @@ def _validate_city(city: str) -> bool:
         True if the city name is valid.
     """
     return bool(city and _VALID_CITY_PATTERN.match(city.strip()))
+
+
+def _normalize_city_alias(city: str) -> str:
+    """Map common transliteration aliases to OpenWeather-friendly names."""
+    normalized = city.strip().lower()
+    return _CITY_ALIASES.get(normalized, city.strip())
 
 
 def get_weather(city: str, api_key: Optional[str] = None) -> str:
@@ -49,26 +60,45 @@ def get_weather(city: str, api_key: Optional[str] = None) -> str:
         return "Weather feature is unavailable. Please set your OPENWEATHER_API_KEY."
 
     city = sanitize_query(city, max_length=80)
+    city = _normalize_city_alias(city)
     if not _validate_city(city):
         return "That doesn't look like a valid city name. Please try again."
 
     try:
-        start = time.perf_counter()
-        response = requests.get(
-            Config.WEATHER_API_URL,
-            params={"q": city, "appid": key, "units": Config.WEATHER_UNITS},
-            timeout=Config.HTTP_TIMEOUT,
-        )
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        data = response.json()
+        def _weather_request(query: str):
+            start = time.perf_counter()
+            response = requests.get(
+                Config.WEATHER_API_URL,
+                params={"q": query, "appid": key, "units": Config.WEATHER_UNITS},
+                timeout=Config.HTTP_TIMEOUT,
+            )
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            payload = response.json()
+            logger.info(
+                "Weather API call completed in %.1fms (status=%s)",
+                elapsed_ms,
+                response.status_code,
+            )
+            return response, payload
+
+        response, data = _weather_request(city)
         logger.info(
-            "Weather API call completed in %.1fms (status=%s)",
-            elapsed_ms,
-            response.status_code,
+            "Weather lookup query used: %s",
+            city,
         )
 
+        if data.get("cod") != 200 and "," not in city:
+            message = str(data.get("message", "")).lower()
+            if response.status_code == 404 and "city not found" in message:
+                et_query = f"{city},ET"
+                response, et_data = _weather_request(et_query)
+                if et_data.get("cod") == 200:
+                    data = et_data
+                else:
+                    data = et_data
+
         if data.get("cod") != 200:
-            error_msg = data.get("message", "Unknown error")
+            error_msg = str(data.get("message", "Unknown error"))
             if response.status_code == 429:
                 return "Weather service rate limit reached. Please try again shortly."
             logger.warning("Weather API error for '%s': %s", city, error_msg)

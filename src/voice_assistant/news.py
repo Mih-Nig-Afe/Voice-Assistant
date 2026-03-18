@@ -61,7 +61,13 @@ def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
 
         articles = data.get("articles", [])
         if not articles:
-            return f"No news articles found{' about ' + topic if topic else ''}."
+            if topic:
+                logger.info(
+                    "No topic-filtered news for '%s'; retrying with general top headlines.",
+                    topic,
+                )
+                return get_top_headlines(topic=None, count=count)
+            return "No news articles found right now."
 
         lines = []
         for i, article in enumerate(articles[:count], 1):
@@ -115,6 +121,12 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
         # Skip the feed title (first item)
         headlines = titles[1 : count + 1] if len(titles) > 1 else titles[:count]
 
+        if not headlines and topic:
+            logger.info(
+                "No RSS topic headlines for '%s'; retrying with general headlines.",
+                topic,
+            )
+            return _get_headlines_fallback(topic=None, count=count)
         if not headlines:
             return "No news headlines available right now."
 

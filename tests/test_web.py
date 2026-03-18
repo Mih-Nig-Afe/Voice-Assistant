@@ -55,11 +55,52 @@ def test_web_city_name_not_misread_as_calculator_intent() -> None:
     assert "Addis weather ok" == response.response
 
 
+def test_web_weather_follow_up_with_preposition_is_normalized() -> None:
+    web._pending_weather_city = True
+    with patch(
+        "voice_assistant.web.get_weather", return_value="Shashamani weather ok"
+    ) as mocked:
+        response = process_user_query("for shashamani")
+    mocked.assert_called_once_with("shashamani")
+    assert response.response == "Shashamani weather ok"
+
+
+def test_web_weather_follow_up_with_no_city_tokens_prompts_again() -> None:
+    web._pending_weather_city = True
+    with patch("voice_assistant.web.get_weather") as mocked:
+        response = process_user_query("location where is the")
+    mocked.assert_not_called()
+    assert "Please tell me the city name" in response.response
+
+
+def test_web_news_generic_phrase_uses_general_headlines() -> None:
+    with patch("voice_assistant.web.get_top_headlines", return_value="Top news") as mocked:
+        response = process_user_query("Tell me your news.")
+    mocked.assert_called_once_with(None)
+    assert response.response == "Top news"
+
+
+def test_web_news_topic_phrase_extracts_clean_topic() -> None:
+    with patch(
+        "voice_assistant.web.get_top_headlines", return_value="Tech headlines"
+    ) as mocked:
+        response = process_user_query("What's the latest news about technology?")
+    mocked.assert_called_once_with("technology")
+    assert response.response == "Tech headlines"
+
+
 def test_web_redirects_0_0_0_0_origin_to_127_loopback() -> None:
     client = TestClient(app, base_url="http://0.0.0.0:8000")
     response = client.get("/", follow_redirects=False)
     assert response.status_code == 307
     assert response.headers["location"] == "http://127.0.0.1:8000/"
+
+
+def test_web_static_assets_are_served_with_no_store_cache_headers() -> None:
+    client = TestClient(app)
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, max-age=0"
 
 
 def test_web_transcribe_endpoint_returns_text() -> None:

@@ -24,15 +24,19 @@ let useServerTranscription = false;
 let mediaRecorder = null;
 let mediaStream = null;
 let recordedChunks = [];
+let fallbackAudioContext = null;
+let fallbackSourceNode = null;
+let fallbackScriptNode = null;
+let fallbackGainNode = null;
+let fallbackSampleRate = 16000;
+let fallbackPcmChunks = [];
 let fallbackStopTimer = null;
 let fallbackShouldTranscribe = true;
 let orbX = 0;
 let orbY = 0;
 let targetX = 0;
 let targetY = 0;
-const MAX_NETWORK_ERRORS = 3;
 const SPEECH_ERROR_COOLDOWN_MS = 2500;
-const MIC_NETWORK_PAUSE_MS = 10000;
 const FALLBACK_RECORDING_MS = 7000;
 
 function isLoopbackHost(hostname) {
@@ -49,11 +53,11 @@ function isLoopbackHost(hostname) {
 }
 
 function canUseServerTranscription() {
-  return Boolean(
-    window.MediaRecorder &&
-      navigator.mediaDevices &&
-      navigator.mediaDevices.getUserMedia
-  );
+  return Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function canUseMediaRecorder() {
+  return Boolean(window.MediaRecorder);
 }
 
 function getIdleMicLabel() {
@@ -157,7 +161,7 @@ function setState(mode, hint) {
 }
 
 function pickRecordingMimeType() {
-  if (!window.MediaRecorder || !window.MediaRecorder.isTypeSupported) {
+  if (!canUseMediaRecorder() || !window.MediaRecorder.isTypeSupported) {
     return "";
   }
   const candidates = [
@@ -189,6 +193,63 @@ function audioExtensionFromMimeType(mimeType) {
     return "mp3";
   }
   return "webm";
+}
+
+function mergeFloat32Chunks(chunks) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function encodeWavBlob(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  function writeAscii(text) {
+    for (let i = 0; i < text.length; i += 1) {
+      view.setUint8(offset, text.charCodeAt(i));
+      offset += 1;
+    }
+  }
+
+  writeAscii("RIFF");
+  view.setUint32(offset, 36 + dataLength, true);
+  offset += 4;
+  writeAscii("WAVE");
+  writeAscii("fmt ");
+  view.setUint32(offset, 16, true);
+  offset += 4;
+  view.setUint16(offset, 1, true); // PCM
+  offset += 2;
+  view.setUint16(offset, 1, true); // mono
+  offset += 2;
+  view.setUint32(offset, sampleRate, true);
+  offset += 4;
+  view.setUint32(offset, sampleRate * bytesPerSample, true);
+  offset += 4;
+  view.setUint16(offset, bytesPerSample, true);
+  offset += 2;
+  view.setUint16(offset, 16, true);
+  offset += 2;
+  writeAscii("data");
+  view.setUint32(offset, dataLength, true);
+  offset += 4;
+
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
 }
 
 async function blobToBase64(blob) {
@@ -226,6 +287,28 @@ async function transcribeBlobViaBackend(blob) {
   return (data?.transcript || "").trim();
 }
 
+function cleanupWebAudioResources() {
+  if (fallbackSourceNode) {
+    fallbackSourceNode.disconnect();
+    fallbackSourceNode = null;
+  }
+  if (fallbackScriptNode) {
+    fallbackScriptNode.onaudioprocess = null;
+    fallbackScriptNode.disconnect();
+    fallbackScriptNode = null;
+  }
+  if (fallbackGainNode) {
+    fallbackGainNode.disconnect();
+    fallbackGainNode = null;
+  }
+  if (fallbackAudioContext) {
+    const ctx = fallbackAudioContext;
+    fallbackAudioContext = null;
+    ctx.close().catch(() => {});
+  }
+  fallbackSampleRate = 16000;
+}
+
 function cleanupRecorderResources() {
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
@@ -233,6 +316,54 @@ function cleanupRecorderResources() {
   }
   mediaRecorder = null;
   recordedChunks = [];
+  fallbackPcmChunks = [];
+}
+
+async function handleRecordedBlob(blob) {
+  if (!blob.size) {
+    setState("idle", "No voice detected. Try speaking a bit louder.");
+    return;
+  }
+  try {
+    setState("idle", "Processing your voice...");
+    const transcript = await transcribeBlobViaBackend(blob);
+    if (!transcript) {
+      addMessage("bot", "I could not detect clear speech. Please try again.");
+      setState("idle", "No speech detected. Try again.");
+      return;
+    }
+    networkErrorCount = 0;
+    micLocked = false;
+    micPausedUntil = 0;
+    inputEl.value = transcript;
+    sendMessage();
+  } catch (error) {
+    addMessage("bot", `Voice transcription failed: ${error.message}`);
+    setState("idle", "Voice transcription failed. You can keep typing.");
+  }
+}
+
+async function finalizeWebAudioRecording(transcribe = true) {
+  const pcmChunks = fallbackPcmChunks.slice();
+  const sampleRate = fallbackSampleRate;
+  cleanupWebAudioResources();
+  cleanupRecorderResources();
+  listening = false;
+  setMicButtonIdle();
+
+  if (!transcribe) {
+    setState("idle", "Tap the mic and speak naturally.");
+    return;
+  }
+
+  if (!pcmChunks.length) {
+    setState("idle", "No voice detected. Try speaking a bit louder.");
+    return;
+  }
+
+  const merged = mergeFloat32Chunks(pcmChunks);
+  const wavBlob = encodeWavBlob(merged, sampleRate);
+  await handleRecordedBlob(wavBlob);
 }
 
 function stopFallbackRecording(transcribe = true) {
@@ -245,7 +376,12 @@ function stopFallbackRecording(transcribe = true) {
     mediaRecorder.stop();
     return;
   }
+  if (fallbackAudioContext || fallbackSourceNode || fallbackScriptNode) {
+    void finalizeWebAudioRecording(transcribe);
+    return;
+  }
   listening = false;
+  cleanupWebAudioResources();
   cleanupRecorderResources();
   setMicButtonIdle();
 }
@@ -260,69 +396,84 @@ async function startFallbackRecording() {
     return;
   }
 
-  const mimeType = pickRecordingMimeType();
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   recordedChunks = [];
+  fallbackPcmChunks = [];
   fallbackShouldTranscribe = true;
 
-  mediaRecorder = mimeType
-    ? new MediaRecorder(mediaStream, { mimeType })
-    : new MediaRecorder(mediaStream);
+  if (canUseMediaRecorder()) {
+    const mimeType = pickRecordingMimeType();
+    mediaRecorder = mimeType
+      ? new MediaRecorder(mediaStream, { mimeType })
+      : new MediaRecorder(mediaStream);
 
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data && event.data.size > 0) {
-      recordedChunks.push(event.data);
-    }
-  };
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    };
 
-  mediaRecorder.onerror = () => {
-    listening = false;
-    cleanupRecorderResources();
-    setMicButtonIdle();
-    addMessage("bot", "Recording failed in the browser. You can still type.");
-    setState("idle", "Recording failed. Use text chat or retry.");
-  };
+    mediaRecorder.onerror = () => {
+      listening = false;
+      cleanupWebAudioResources();
+      cleanupRecorderResources();
+      setMicButtonIdle();
+      addMessage("bot", "Recording failed in the browser. You can still type.");
+      setState("idle", "Recording failed. Use text chat or retry.");
+    };
 
-  mediaRecorder.onstop = async () => {
-    const shouldTranscribe = fallbackShouldTranscribe;
-    fallbackShouldTranscribe = true;
-    listening = false;
-    setMicButtonIdle();
+    mediaRecorder.onstop = async () => {
+      if (fallbackStopTimer) {
+        window.clearTimeout(fallbackStopTimer);
+        fallbackStopTimer = null;
+      }
+      const shouldTranscribe = fallbackShouldTranscribe;
+      fallbackShouldTranscribe = true;
+      listening = false;
+      setMicButtonIdle();
 
-    const inferredMimeType =
-      recordedChunks[0]?.type || mimeType || "audio/webm";
-    const blob = new Blob(recordedChunks, { type: inferredMimeType });
-    cleanupRecorderResources();
+      const inferredMimeType =
+        recordedChunks[0]?.type || mimeType || "audio/webm";
+      const blob = new Blob(recordedChunks, { type: inferredMimeType });
+      cleanupWebAudioResources();
+      cleanupRecorderResources();
 
-    if (!shouldTranscribe) {
-      setState("idle", "Tap the mic and speak naturally.");
-      return;
-    }
-    if (!blob.size) {
-      setState("idle", "No voice detected. Try speaking a bit louder.");
-      return;
-    }
-
-    try {
-      setState("idle", "Processing your voice...");
-      const transcript = await transcribeBlobViaBackend(blob);
-      if (!transcript) {
-        addMessage("bot", "I could not detect clear speech. Please try again.");
-        setState("idle", "No speech detected. Try again.");
+      if (!shouldTranscribe) {
+        setState("idle", "Tap the mic and speak naturally.");
         return;
       }
-      networkErrorCount = 0;
-      micLocked = false;
-      micPausedUntil = 0;
-      inputEl.value = transcript;
-      sendMessage();
-    } catch (error) {
-      addMessage("bot", `Voice transcription failed: ${error.message}`);
-      setState("idle", "Voice transcription failed. You can keep typing.");
-    }
-  };
+      await handleRecordedBlob(blob);
+    };
 
-  mediaRecorder.start();
+    mediaRecorder.start();
+  } else {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      cleanupRecorderResources();
+      addMessage(
+        "bot",
+        "Voice fallback is unavailable in this browser. You can keep typing."
+      );
+      setState("idle", "Voice fallback is unavailable in this browser.");
+      return;
+    }
+    fallbackAudioContext = new AudioContextCtor();
+    fallbackSampleRate = fallbackAudioContext.sampleRate || 16000;
+    fallbackSourceNode = fallbackAudioContext.createMediaStreamSource(mediaStream);
+    fallbackScriptNode = fallbackAudioContext.createScriptProcessor(4096, 1, 1);
+    fallbackGainNode = fallbackAudioContext.createGain();
+    fallbackGainNode.gain.value = 0;
+
+    fallbackScriptNode.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      fallbackPcmChunks.push(new Float32Array(input));
+    };
+
+    fallbackSourceNode.connect(fallbackScriptNode);
+    fallbackScriptNode.connect(fallbackGainNode);
+    fallbackGainNode.connect(fallbackAudioContext.destination);
+  }
+
   listening = true;
   if (micBtn) {
     micBtn.textContent = "Stop Recording";
@@ -331,11 +482,10 @@ async function startFallbackRecording() {
     "listening",
     `Recording for up to ${Math.round(FALLBACK_RECORDING_MS / 1000)}s...`
   );
-  fallbackStopTimer = window.setTimeout(() => {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop();
-    }
-  }, FALLBACK_RECORDING_MS);
+  fallbackStopTimer = window.setTimeout(
+    () => stopFallbackRecording(true),
+    FALLBACK_RECORDING_MS
+  );
 }
 
 function switchToServerTranscription(message) {
@@ -354,7 +504,7 @@ function switchToServerTranscription(message) {
   if (!wasAlreadyEnabled && message) {
     addMessage("bot", message);
   }
-  setState("idle", "Fallback voice capture is ready.");
+  setState("idle", "Recording fallback is ready.");
   return true;
 }
 
@@ -459,34 +609,24 @@ function initRecognition() {
     lastSpeechErrorAt = now;
 
     if (event.error === "network") {
-      networkErrorCount += 1;
-
-      if (shouldShowError) {
-        addMessage("bot", "Speech service network issue detected. Checking again...");
-      }
-
-      if (networkErrorCount >= MAX_NETWORK_ERRORS) {
-        const switched = switchToServerTranscription(
-          "Browser speech service kept failing. Switched to built-in recording mode."
-        );
-        if (switched) {
-          return;
-        }
-        micLocked = true;
-        micPausedUntil = Date.now() + MIC_NETWORK_PAUSE_MS;
-        if (micBtn) {
-          micBtn.disabled = false;
-          micBtn.textContent = "Retry Mic";
-        }
-        addMessage(
-          "bot",
-          "Voice input paused after repeated network errors. Please check internet, then tap Retry Mic in a few seconds."
-        );
-        setState("idle", "Voice paused. You can still chat by typing.");
+      const switched = switchToServerTranscription(
+        "Browser speech service is unreachable. Switched to built-in recording mode."
+      );
+      if (switched) {
+        setState("idle", "Recording fallback is ready. Tap Start Recording.");
         return;
       }
-
-      setState("idle", "Temporary speech network issue. Retrying...");
+      if (shouldShowError) {
+        addMessage(
+          "bot",
+          "Browser speech service is unreachable in this browser session. Voice fallback is unavailable here, so please type your message."
+        );
+      }
+      micLocked = false;
+      micPausedUntil = 0;
+      networkErrorCount = 0;
+      setMicButtonIdle();
+      setState("idle", "Voice fallback unavailable. You can still type.");
       return;
     }
 
@@ -666,20 +806,6 @@ if (micBtn) {
   micBtn.addEventListener("click", async () => {
     if (!recognition && !useServerTranscription) {
       return;
-    }
-
-    if (micLocked && !useServerTranscription) {
-      if (Date.now() < micPausedUntil) {
-        const secondsLeft = Math.ceil((micPausedUntil - Date.now()) / 1000);
-        addMessage(
-          "bot",
-          `Voice input is cooling down after network issues. Try again in about ${secondsLeft}s, or continue typing.`
-        );
-        return;
-      }
-      micLocked = false;
-      networkErrorCount = 0;
-      setMicButtonIdle();
     }
 
     const permissionState = await getMicPermissionState();

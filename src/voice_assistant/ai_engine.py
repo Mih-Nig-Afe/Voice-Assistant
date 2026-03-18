@@ -27,10 +27,14 @@ _backend: str = "none"
 
 # System prompt for conversational AI
 _SYSTEM_PROMPT = (
-    "You are Miehab, a friendly and helpful voice assistant. "
-    "Keep responses concise (2-3 sentences) since they will be spoken aloud. "
-    "Be warm, accurate, and conversational. If you don't know something, say so honestly."
+    "You are Miehab, a helpful and practical voice assistant. "
+    "Understand imperfect speech transcripts and infer intent from context. "
+    "When a request is clear, answer directly without unnecessary follow-up questions. "
+    "If the user is mistaken, politely correct them with a brief explanation. "
+    "Keep responses concise (2-3 sentences) since they may be spoken aloud. "
+    "Be accurate, conversational, and honest when uncertain."
 )
+_AI_MODEL_HARD_FALLBACK = "llama-3.3-70b-versatile"
 
 
 def _init_groq() -> bool:
@@ -132,19 +136,41 @@ def _generate_groq(
             messages.extend(history[-Config.AI_MAX_HISTORY :])
         messages.append({"role": "user", "content": prompt})
 
-        response = _groq_client.chat.completions.create(
-            model=Config.AI_MODEL,
-            messages=messages,
-            max_tokens=Config.AI_MAX_LENGTH,
-            temperature=0.7,
-        )
-        content = response.choices[0].message.content if response.choices else ""
-        text = (content or "").strip()
-        if not text:
-            logger.warning("Groq returned an empty response body.")
-            return "I don't have a response right now. Please try once more."
-        logger.debug("Groq response (%d chars)", len(text))
-        return text
+        model_candidates = [Config.AI_MODEL]
+        if Config.AI_MODEL != _AI_MODEL_HARD_FALLBACK:
+            model_candidates.append(_AI_MODEL_HARD_FALLBACK)
+
+        last_error = None
+        for model_name in model_candidates:
+            try:
+                response = _groq_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=Config.AI_MAX_LENGTH,
+                    temperature=0.4,
+                )
+                content = response.choices[0].message.content if response.choices else ""
+                text = (content or "").strip()
+                if text:
+                    if model_name != Config.AI_MODEL:
+                        logger.warning(
+                            "Primary model '%s' failed/empty; using fallback '%s'.",
+                            Config.AI_MODEL,
+                            model_name,
+                        )
+                    logger.debug("Groq response (%d chars) [model=%s]", len(text), model_name)
+                    return text
+                last_error = RuntimeError("empty response body")
+                logger.warning(
+                    "Groq model '%s' returned empty response. Trying fallback model if available.",
+                    model_name,
+                )
+            except Exception as model_exc:
+                last_error = model_exc
+                logger.error("Groq model '%s' error: %s", model_name, model_exc)
+
+        logger.warning("Groq failed across candidate models. Last error: %s", last_error)
+        return "I don't have a response right now. Please try once more."
     except Exception as e:
         msg = str(e).lower()
         if "rate" in msg or "429" in msg:

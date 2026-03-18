@@ -42,6 +42,70 @@ app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 _pending_weather_city: bool = False
 _groq_audio_client = None
+_CITY_STOPWORDS = {
+    "weather",
+    "temperature",
+    "city",
+    "location",
+    "where",
+    "what",
+    "is",
+    "the",
+    "in",
+    "for",
+    "of",
+    "at",
+    "to",
+    "now",
+    "today",
+    "please",
+    "kindly",
+    "check",
+    "tell",
+    "me",
+    "show",
+    "give",
+    "right",
+    "current",
+    "currently",
+    "moment",
+    "its",
+    "it",
+}
+_NEWS_TOPIC_STOPWORDS = {
+    "news",
+    "headlines",
+    "headline",
+    "tell",
+    "me",
+    "your",
+    "the",
+    "a",
+    "an",
+    "about",
+    "on",
+    "for",
+    "of",
+    "in",
+    "with",
+    "latest",
+    "current",
+    "today",
+    "show",
+    "give",
+    "get",
+    "please",
+    "what",
+    "whats",
+    "what's",
+    "is",
+    "happening",
+    "happenings",
+    "update",
+    "updates",
+    "any",
+    "new",
+}
 
 
 class ChatRequest(BaseModel):
@@ -143,13 +207,20 @@ def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
     if _groq_audio_client is None:
         _groq_audio_client = Groq(api_key=api_key)
 
-    response = _groq_audio_client.audio.transcriptions.create(
-        model="whisper-large-v3-turbo",
-        file=(file_name, audio_bytes),
-        language="en",
-        temperature=0.0,
-        response_format="json",
-    )
+    model = Config.STT_MODEL.strip() or "whisper-large-v3"
+    language = Config.STT_LANGUAGE.strip() or "en"
+    prompt = Config.STT_PROMPT.strip()
+    request_payload = {
+        "model": model,
+        "file": (file_name, audio_bytes),
+        "language": language,
+        "temperature": 0.0,
+        "response_format": "json",
+    }
+    if prompt:
+        request_payload["prompt"] = prompt
+
+    response = _groq_audio_client.audio.transcriptions.create(**request_payload)
     return _extract_transcript_text(response)
 
 
@@ -197,19 +268,64 @@ def _extract_weather_city(text: str) -> str:
     if not city:
         return ""
 
-    city = re.sub(
-        r"^(please|kindly|the|a|an|city of|city)\s+",
-        "",
-        city,
-    )
-    city = re.sub(r"^(is\s+)?(in|for|of)\s+", "", city)
-    city = re.sub(
-        r"\s+(today|now|right now|currently|please|for today|at the moment)$",
-        "",
-        city,
-    )
-    city = re.sub(r"[^a-zA-Z\s\-\.' ]", "", city).strip()
-    return city
+    return _normalize_city_candidate(city)
+
+
+def _normalize_city_candidate(text: str) -> str:
+    """Normalize noisy city fragments from speech/typed input."""
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z\-\.' ]*", (text or "").lower())
+    if not tokens:
+        return ""
+
+    city_tokens: list[str] = []
+    for raw in tokens:
+        for token in raw.strip().split():
+            clean = token.strip(" .,'")
+            if not clean or clean in _CITY_STOPWORDS:
+                continue
+            city_tokens.append(clean)
+
+    if not city_tokens:
+        return ""
+
+    return " ".join(city_tokens[:4]).strip()
+
+
+def _normalize_news_topic_candidate(text: str) -> str:
+    """Normalize possible topic text from natural-language news requests."""
+    raw_tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9\-\.'#+]*", (text or "").lower())
+    tokens = [tok.strip(" .,'!?\"") for tok in raw_tokens]
+    if not tokens:
+        return ""
+
+    topic_tokens = [t for t in tokens if t and t not in _NEWS_TOPIC_STOPWORDS]
+    if not topic_tokens:
+        return ""
+    return " ".join(topic_tokens[:6]).strip()
+
+
+def _extract_news_topic(text: str) -> str:
+    """Extract an optional topic from natural-language news queries."""
+    query = (text or "").strip().lower()
+    if not query:
+        return ""
+
+    patterns = [
+        r"(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
+        r"(?:what(?:'s| is)\s+happening)\s+(?:in|with|on)\s+(.+)$",
+        r"(?:tell me|show me|give me|get me)\s+(?:the\s+)?(?:latest\s+|current\s+)?(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
+        r"(?:what(?:'s| is)\s+(?:the\s+)?)?(?:latest\s+|current\s+)?(?:news|headlines)\s+(?:about|on|for|regarding)\s+(.+)$",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, query)
+        if match:
+            return _normalize_news_topic_candidate(match.group(1))
+
+    if "news" in query or "headlines" in query or "what's happening" in query:
+        return _normalize_news_topic_candidate(query)
+
+    return ""
 
 
 def process_user_query(user_input: str) -> ChatResponse:
@@ -246,13 +362,17 @@ def process_user_query(user_input: str) -> ChatResponse:
             "help",
         ]
     ):
-        _pending_weather_city = False
-        response = get_weather(query)
+        city = _extract_weather_city(query) or _normalize_city_candidate(query)
+        if city:
+            _pending_weather_city = False
+            response = get_weather(city)
+        else:
+            response = "Please tell me the city name, for example: Addis Ababa."
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
     if _contains_any_word(normalized, ["weather", "temperature"]):
-        city = _extract_weather_city(query)
+        city = _extract_weather_city(query) or _normalize_city_candidate(query)
         if not city:
             _pending_weather_city = True
             response = (
@@ -283,21 +403,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         or "headlines" in normalized
         or "what's happening" in normalized
     ):
-        topic = _strip_phrases(
-            normalized,
-            [
-                "news about",
-                "news on",
-                "headlines about",
-                "latest news about",
-                "what's happening in",
-                "what's happening with",
-                "latest news",
-                "what's happening",
-                "news",
-                "headlines",
-            ],
-        )
+        topic = _extract_news_topic(query)
         response = get_top_headlines(topic if topic else None)
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
@@ -428,7 +534,12 @@ async def redirect_unsafe_loopback_host(
         port = request.url.port or 8000
         target = str(request.url.replace(netloc=f"127.0.0.1:{port}"))
         return RedirectResponse(url=target, status_code=307)
-    return await call_next(request)
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/")
