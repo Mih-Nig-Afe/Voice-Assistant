@@ -1,10 +1,19 @@
 import base64
+import pytest
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
 from voice_assistant import web
 from voice_assistant.web import app, process_user_query
+
+
+@pytest.fixture(autouse=True)
+def reset_web_runtime_state() -> None:
+    web._pending_weather_city = False
+    web._last_weather_city = ""
+    web._last_news_topic = ""
+    web._last_news_headline_response = ""
 
 
 def test_web_help_command_returns_capabilities() -> None:
@@ -39,7 +48,6 @@ def test_web_weather_follow_up_city_is_understood() -> None:
 
 
 def test_web_weather_phrase_with_today_suffix() -> None:
-    web._pending_weather_city = False
     with patch(
         "voice_assistant.web.get_weather", return_value="Addis weather ok"
     ) as mocked:
@@ -81,6 +89,56 @@ def test_web_weather_follow_up_with_conversational_noise_prompts_again() -> None
     assert "Please tell me the city name" in response.response
 
 
+def test_web_clear_history_not_misread_as_pending_weather_city() -> None:
+    web._pending_weather_city = True
+    with patch("voice_assistant.web.get_weather") as mocked:
+        response = process_user_query("clear history")
+    mocked.assert_not_called()
+    assert "cleared our conversation history" in response.response.lower()
+    assert web._pending_weather_city is False
+
+
+def test_web_hot_question_uses_explicit_city_reference() -> None:
+    with patch("voice_assistant.web.get_weather", return_value="Hawassa weather ok") as mocked:
+        response = process_user_query("Could you tell me how hot it is here in Hawassa?")
+    mocked.assert_called_once_with("hawassa")
+    assert response.response == "Hawassa weather ok"
+
+
+def test_web_hot_question_uses_last_weather_city_context() -> None:
+    web._last_weather_city = "hawassa"
+    with patch("voice_assistant.web.get_weather", return_value="Hawassa weather ok") as mocked:
+        response = process_user_query("How hot is it now?")
+    mocked.assert_called_once_with("hawassa")
+    assert response.response == "Hawassa weather ok"
+
+
+def test_web_hot_followup_uses_city_from_prior_hot_statement() -> None:
+    with patch("voice_assistant.web.get_weather", return_value="Hawassa weather ok") as mocked:
+        process_user_query("It's kinda hot here in Hawassa today.")
+        response = process_user_query("Could you check me how old is it?")
+    mocked.assert_called_once_with("hawassa")
+    assert response.response == "Hawassa weather ok"
+
+
+def test_web_weather_hot_descriptor_without_city_prompts_for_city() -> None:
+    with patch("voice_assistant.web.get_weather") as mocked:
+        response = process_user_query(
+            "Yeah, it's like I just wanna sleep but like the weather is too hot like too hot."
+        )
+    mocked.assert_not_called()
+    assert "which city should i check" in response.response.lower()
+
+
+def test_web_weather_city_reference_inside_sentence_is_detected() -> None:
+    with patch("voice_assistant.web.get_weather", return_value="Hawassa weather ok") as mocked:
+        response = process_user_query(
+            "Now currently I'm in Hawassa and the weather is kinda hot. Could you check it for me?"
+        )
+    mocked.assert_called_once_with("hawassa")
+    assert response.response == "Hawassa weather ok"
+
+
 def test_web_news_generic_phrase_uses_general_headlines() -> None:
     with patch("voice_assistant.web.get_top_headlines", return_value="Top news") as mocked:
         response = process_user_query("Tell me your news.")
@@ -98,7 +156,6 @@ def test_web_news_topic_phrase_extracts_clean_topic() -> None:
 
 
 def test_web_news_update_phrase_routes_to_news_lookup() -> None:
-    web._pending_weather_city = False
     with patch(
         "voice_assistant.web.get_top_headlines", return_value="Iran update"
     ) as mocked:
@@ -110,7 +167,6 @@ def test_web_news_update_phrase_routes_to_news_lookup() -> None:
 
 
 def test_web_what_is_latest_on_topic_prefers_news_over_wiki() -> None:
-    web._pending_weather_city = False
     with patch(
         "voice_assistant.web.get_top_headlines", return_value="Latest headlines"
     ) as mocked_news, patch("voice_assistant.web.get_summary") as mocked_wiki:
@@ -118,6 +174,189 @@ def test_web_what_is_latest_on_topic_prefers_news_over_wiki() -> None:
     mocked_news.assert_called_once_with("iran israel")
     mocked_wiki.assert_not_called()
     assert response.response == "Latest headlines"
+
+
+def test_web_news_update_request_prefers_summary_style_response() -> None:
+    with patch(
+        "voice_assistant.web.get_top_headlines",
+        return_value=(
+            "Here are the latest headlines on iran us israel:\n"
+            "1. Headline one (Source A)\n"
+            "2. Headline two (Source B)"
+        ),
+    ) as mocked_news, patch(
+        "voice_assistant.web._summarize_news_update", return_value="Short grounded update."
+    ) as mocked_summary:
+        response = process_user_query("Update me on the Iran and US and Israel war.")
+    mocked_news.assert_called_once_with("iran us israel war")
+    mocked_summary.assert_called_once()
+    assert response.response == "Short grounded update."
+
+
+def test_web_news_summary_omits_confidence_and_sources_lines_by_default() -> None:
+    headline_payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Story one (Source A)\n"
+        "2. Story two (Source B)\n"
+        "3. Story three (Source C)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="Situation is tense with ongoing military and political signals.",
+    ):
+        response = web._summarize_news_update(
+            "Update me on Iran and Israel.",
+            "iran israel",
+            headline_payload,
+        )
+    assert "Situation is tense" in response
+    assert "Confidence:" not in response
+    assert "Sources used:" not in response
+
+
+def test_web_news_summary_includes_meta_lines_when_explicitly_requested() -> None:
+    headline_payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Story one (Source A)\n"
+        "2. Story two (Source B)\n"
+        "3. Story three (Source C)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="Situation is tense with ongoing military and political signals.",
+    ):
+        response = web._summarize_news_update(
+            "Update me on Iran and Israel with confidence and sources.",
+            "iran israel",
+            headline_payload,
+        )
+    assert "Situation is tense" in response
+    assert "Confidence:" in response
+    assert "Sources used:" in response
+    assert "Source A" in response
+    assert "Source B" in response
+
+
+def test_web_news_followup_question_uses_recent_headlines_context() -> None:
+    web._last_news_topic = "iran us israel war"
+    web._last_news_headline_response = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Story one (Source A)\n"
+        "2. Story two (Source B)"
+    )
+    with patch(
+        "voice_assistant.web._answer_news_followup",
+        return_value="Direct follow-up answer.",
+    ) as mocked_followup, patch("voice_assistant.web.get_summary") as mocked_wiki:
+        response = process_user_query("Who is attacking now? Iran, Israel, or US?")
+    mocked_followup.assert_called_once()
+    mocked_wiki.assert_not_called()
+    assert response.response == "Direct follow-up answer."
+
+
+def test_web_news_followup_with_new_topic_fetches_fresh_headlines() -> None:
+    web._last_news_topic = "world"
+    web._last_news_headline_response = (
+        "Here are the latest headlines:\n"
+        "1. General item (Source A)\n"
+        "2. Another item (Source B)"
+    )
+    with patch(
+        "voice_assistant.web.get_top_headlines",
+        return_value=(
+            "Here are the latest headlines on iran israel us:\n"
+            "1. Conflict item (Source X)"
+        ),
+    ) as mocked_news, patch(
+        "voice_assistant.web._answer_news_followup",
+        return_value="Conflict-focused follow-up answer.",
+    ) as mocked_followup:
+        response = process_user_query("What about the war between Iran, Israel, and the US?")
+    mocked_news.assert_called_once_with("war iran israel us")
+    mocked_followup.assert_called_once()
+    assert response.response == "Conflict-focused follow-up answer."
+
+
+def test_web_general_news_request_sets_general_topic_cache() -> None:
+    with patch("voice_assistant.web.get_top_headlines", return_value="Top news"):
+        response = process_user_query("Tell me your news.")
+    assert response.response == "Top news"
+    assert web._last_news_topic == "general"
+
+
+def test_web_news_followup_with_new_topic_after_general_cache_fetches_fresh_headlines() -> None:
+    web._last_news_topic = ""
+    web._last_news_headline_response = (
+        "Here are the latest headlines:\n"
+        "1. General item (Source A)\n"
+        "2. Another item (Source B)"
+    )
+    with patch(
+        "voice_assistant.web.get_top_headlines",
+        return_value=(
+            "Here are the latest headlines on iran israel us:\n"
+            "1. Conflict item (Source X)"
+        ),
+    ) as mocked_news, patch(
+        "voice_assistant.web._answer_news_followup",
+        return_value="Conflict-focused follow-up answer.",
+    ) as mocked_followup:
+        response = process_user_query("What about the war between Iran, Israel, and the US?")
+    mocked_news.assert_called_once_with("war iran israel us")
+    mocked_followup.assert_called_once()
+    assert response.response == "Conflict-focused follow-up answer."
+
+
+def test_web_news_generic_other_headlines_phrase_falls_back_to_general() -> None:
+    with patch(
+        "voice_assistant.web.get_top_headlines",
+        return_value="Here are the latest headlines:\n1. General",
+    ) as mocked:
+        response = process_user_query("Or look for any other headlines such as more.")
+    mocked.assert_called_once_with(None)
+    assert "latest headlines" in response.response.lower()
+
+
+def test_web_news_followup_answer_omits_meta_lines_by_default() -> None:
+    payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Side A and Side B exchanged strikes (Source A)\n"
+        "2. Diplomatic statement follows overnight attacks (Source B)\n"
+        "3. Regional military alert raised (Source C)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="Current reports suggest both sides have launched strikes.",
+    ):
+        response = web._answer_news_followup(
+            "Who is attacking now? Iran, Israel, or US?",
+            "iran us israel",
+            payload,
+        )
+    assert "Current reports suggest both sides" in response
+    assert "Confidence:" not in response
+    assert "Sources used:" not in response
+
+
+def test_web_news_followup_answer_includes_meta_lines_when_requested() -> None:
+    payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Side A and Side B exchanged strikes (Source A)\n"
+        "2. Diplomatic statement follows overnight attacks (Source B)\n"
+        "3. Regional military alert raised (Source C)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="Current reports suggest both sides have launched strikes.",
+    ):
+        response = web._answer_news_followup(
+            "Who is attacking now? Iran, Israel, or US? Include confidence and sources.",
+            "iran us israel",
+            payload,
+        )
+    assert "Current reports suggest both sides" in response
+    assert "Confidence:" in response
+    assert "Sources used:" in response
 
 
 def test_web_redirects_0_0_0_0_origin_to_127_loopback() -> None:

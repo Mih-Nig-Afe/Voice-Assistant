@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from voice_assistant.news import get_top_headlines, _get_headlines_fallback
+from voice_assistant.news import get_top_headlines, _get_headlines_fallback, _rank_articles_for_topic
 
 
 class TestGetTopHeadlines:
@@ -150,3 +150,21 @@ class TestGetTopHeadlines:
         mock_get.side_effect = requests.exceptions.Timeout()
         result = get_top_headlines()
         assert "taking too long" in result.lower() or "try again" in result.lower()
+
+
+def test_rank_articles_for_entity_topic_filters_us_only_noise() -> None:
+    articles = [
+        {
+            "title": "US inflation cools in latest report",
+            "description": "Domestic economy update",
+            "source": {"name": "Finance Source"},
+        },
+        {
+            "title": "Iran and Israel exchange strikes overnight",
+            "description": "Regional escalation draws US diplomatic response",
+            "source": {"name": "World Source"},
+        },
+    ]
+    ranked = _rank_articles_for_topic(articles, topic="war between iran israel and us")
+    assert len(ranked) == 1
+    assert ranked[0]["title"] == "Iran and Israel exchange strikes overnight"

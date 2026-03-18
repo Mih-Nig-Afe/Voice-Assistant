@@ -44,7 +44,7 @@ class Config:
     TTS_RATE: int = int(os.getenv("TTS_RATE", "160"))
     TTS_VOLUME: float = float(os.getenv("TTS_VOLUME", "1.0"))
     WEB_TTS_BACKEND: str = os.getenv("WEB_TTS_BACKEND", "edge")
-    WEB_TTS_VOICE: str = os.getenv("WEB_TTS_VOICE", "en-US-AriaNeural")
+    WEB_TTS_VOICE: str = os.getenv("WEB_TTS_VOICE", "en-US-AvaMultilingualNeural")
     WEB_TTS_RATE: str = os.getenv("WEB_TTS_RATE", "+0%")
     WEB_TTS_PITCH: str = os.getenv("WEB_TTS_PITCH", "+0Hz")
     WEB_TTS_MAX_CHARS: int = int(os.getenv("WEB_TTS_MAX_CHARS", "900"))
@@ -59,16 +59,17 @@ class Config:
         (
             "Transcribe spoken assistant requests clearly. "
             "Common city names may include Addis Ababa, Hawassa, Shashamane, "
-            "Adama, Dire Dawa, and Bahir Dar."
+            "Adama, Dire Dawa, Bahir Dar, Gode, and Jijiga. "
+            "Common world-news terms may include Iran, Israel, US, and USA."
         ),
     )
 
     # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
     AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
-    AI_MODEL: str = os.getenv("AI_MODEL", "moonshotai/kimi-k2-instruct-0905")
+    AI_MODEL: str = os.getenv("AI_MODEL", "moonshotai/kimi-k2-instruct")
     AI_MODEL_FALLBACKS: str = os.getenv(
         "AI_MODEL_FALLBACKS",
-        "qwen/qwen3-32b,llama-3.3-70b-versatile",
+        "moonshotai/kimi-k2-instruct-0905,llama-3.3-70b-versatile,qwen/qwen3-32b",
     )
     AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
     AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))

@@ -2,6 +2,63 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.17] - 2026-03-18
+
+### Fixed
+
+- Improved weather city extraction for embedded phrases like `I'm in Hawassa and the weather is hot` by switching to non-greedy context matching.
+- Fixed news follow-up cache reuse so topic switches (for example from `world` to `Iran/Israel/US`) fetch fresh headlines instead of reusing stale results.
+- Added explicit `general` news-topic caching so follow-up questions can safely distinguish broad headlines from a new specific conflict topic.
+- Tightened news relevance filtering to require stronger multi-keyword/entity matches for entity-heavy conflict queries, reducing unrelated headline leakage.
+- Updated default AI model chain to `moonshotai/kimi-k2-instruct` with safer fallbacks tuned for Groq runtime stability.
+- Updated default web neural voice to `en-US-AvaMultilingualNeural` and expanded STT prompt vocabulary for common Ethiopia city names and conflict terms.
+- Switched news update/follow-up responses to human-style output by default, with confidence/sources metadata included only when explicitly requested.
+
+### Tested
+
+- Added news ranking regression coverage for filtering out US-only noise on Iran/Israel/US topics.
+- Added/ran web regression tests for embedded city extraction and follow-up fresh-news fetch behavior.
+- Added web regression coverage for explicit `general` topic caching and opt-in confidence/source metadata behavior.
+- Full suite passing: `143 passed`.
+
+## [1.2.16] - 2026-03-18
+
+### Fixed
+
+- Added news follow-up QA routing so questions like `who is attacking now?` stay grounded in recent news context instead of being misrouted to Wikipedia.
+- Added in-memory recent-news context (`topic` + fetched headline block) to support multi-turn conflict follow-up questions.
+- Added follow-up answer formatter with confidence and sources lines, aligned with summarized-update transparency.
+
+### Tested
+
+- Added web tests for follow-up routing using recent-news context and confidence/source lines on follow-up answers.
+
+## [1.2.15] - 2026-03-18
+
+### Fixed
+
+- Added confidence/uncertainty annotation to summarized news updates based on source and headline coverage.
+- Added explicit `Sources used` line to summarized news updates for better transparency.
+- Kept headline-summary mode grounded in fetched headlines while making responses more human-readable.
+
+### Tested
+
+- Added regression coverage for confidence and source-line presence in summarized news responses.
+
+## [1.2.14] - 2026-03-18
+
+### Fixed
+
+- Added weather context carry-over for hot/cold phrasing so recent city mentions can be reused in follow-up requests (for example `how hot is it now?`).
+- Added support for common speech-to-text confusion around `how old is it` in hot-weather conversations by routing through weather intent when context indicates it.
+- Added conversational news-update mode that summarizes fetched headlines into a short human-readable situational update instead of always returning a raw list.
+- Improved topic extraction for update phrasing such as `update me on ...` and city-reference extraction with trailing punctuation.
+
+### Tested
+
+- Added web tests for hot-question city inference, context carry-over across turns, and summary-style news responses.
+- Full suite passing: `130 passed`.
+
 ## [1.2.13] - 2026-03-18
 
 ### Fixed

@@ -41,6 +41,9 @@ app = FastAPI(title="Miehab Web Assistant", version="1.0.0")
 app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 _pending_weather_city: bool = False
+_last_weather_city: str = ""
+_last_news_topic: str = ""
+_last_news_headline_response: str = ""
 _groq_audio_client = None
 _CITY_STOPWORDS = {
     "weather",
@@ -98,8 +101,10 @@ _NEWS_TOPIC_STOPWORDS = {
     "get",
     "please",
     "what",
+    "how",
     "whats",
     "what's",
+    "who",
     "is",
     "happening",
     "happenings",
@@ -111,6 +116,16 @@ _NEWS_TOPIC_STOPWORDS = {
     "case",
     "situation",
     "story",
+    "world",
+    "going",
+    "especially",
+    "look",
+    "other",
+    "such",
+    "as",
+    "more",
+    "between",
+    "our",
 }
 _NON_CITY_FOLLOWUP_TOKENS = {
     "i",
@@ -165,6 +180,43 @@ _NON_NEWS_UPDATE_CONTEXT_WORDS = {
     "math",
     "wikipedia",
 }
+_NEWS_SUMMARY_HINTS = {
+    "update",
+    "updates",
+    "happening",
+    "situation",
+    "details",
+    "detailed",
+    "going on",
+}
+_NEWS_LIST_HINTS = {"headline", "headlines", "list"}
+_NEWS_CONFLICT_HINTS = {
+    "war",
+    "conflict",
+    "attack",
+    "attacking",
+    "attacked",
+    "strike",
+    "strikes",
+    "fighting",
+    "fight",
+    "missile",
+    "ceasefire",
+}
+_NEWS_ENTITY_HINTS = {
+    "iran",
+    "israel",
+    "us",
+    "usa",
+    "u.s",
+    "u.s.",
+    "tehran",
+    "gaza",
+    "hamas",
+    "russia",
+    "ukraine",
+}
+_GENERAL_NEWS_TOPIC = "general"
 
 
 class ChatRequest(BaseModel):
@@ -520,6 +572,7 @@ def _extract_news_topic(text: str) -> str:
             r"(?:update|updates|latest|current)\s+"
             r"(?:on|about|for|regarding|with)\s+(.+)$"
         ),
+        r"(?:update)\s+me\s+(?:on|about|for|regarding|with)\s+(.+)$",
         r"(?:update|updates|latest|current|developments?)\s+(?:on|about|for|regarding|with)\s+(.+)$",
         r"(?:what(?:'s| is)\s+(?:the\s+)?)?(?:latest|current|new)\s+(?:on|about|with)\s+(.+)$",
         (
@@ -571,9 +624,331 @@ def _is_news_intent(query: str) -> bool:
     return bool(topic)
 
 
+def _extract_news_followup_topic(query: str) -> str:
+    """Extract topic from follow-up conflict questions."""
+    direct = _extract_news_topic(query)
+    if direct:
+        return direct
+
+    candidate = _normalize_news_topic_candidate(query)
+    if not candidate:
+        return ""
+
+    normalized = query.lower()
+    has_conflict_hint = _contains_any_word(normalized, list(_NEWS_CONFLICT_HINTS))
+    has_entity_hint = _contains_any_word(normalized, list(_NEWS_ENTITY_HINTS))
+    if has_conflict_hint or has_entity_hint:
+        return candidate
+    return ""
+
+
+def _wants_news_refresh(query: str) -> bool:
+    """Whether user asks for fresh headlines instead of follow-up clarification."""
+    normalized = (query or "").strip().lower()
+    return _contains_any_word(
+        normalized,
+        ["latest", "update", "updates", "current", "news", "headlines", "today", "new"],
+    )
+
+
+def _news_topic_tokens(topic: str) -> set[str]:
+    """Normalize a topic string into comparable keyword tokens."""
+    normalized = _normalize_news_topic_candidate(topic or "")
+    if not normalized:
+        return set()
+    generic_tokens = {
+        "war",
+        "conflict",
+        "attack",
+        "attacking",
+        "attacked",
+        "strike",
+        "strikes",
+        "fighting",
+        "fight",
+        "missile",
+        "ceasefire",
+    }
+    return {token for token in normalized.split() if token and token not in generic_tokens}
+
+
+def _topics_related(current_topic: str, cached_topic: str) -> bool:
+    """Return True if two topic strings are likely referring to the same story cluster."""
+    if not current_topic and not cached_topic:
+        return True
+    if current_topic and not cached_topic:
+        return False
+    if cached_topic and not current_topic:
+        return True
+    current_tokens = _news_topic_tokens(current_topic)
+    cached_tokens = _news_topic_tokens(cached_topic)
+    if current_tokens and not cached_tokens:
+        return False
+    if cached_tokens and not current_tokens:
+        return False
+    if not current_tokens and not cached_tokens:
+        return current_topic.strip().lower() == cached_topic.strip().lower()
+    return bool(current_tokens.intersection(cached_tokens))
+
+
+def _is_news_followup_question(query: str) -> bool:
+    """Detect follow-up questions about a recently discussed news topic."""
+    if _is_news_intent(query):
+        return False
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if not (_contains_any_word(normalized, ["who", "what", "which", "how"]) or "?" in normalized):
+        return False
+
+    followup_topic = _extract_news_followup_topic(query)
+    if followup_topic:
+        return True
+
+    if _last_news_headline_response and _contains_any_word(
+        normalized,
+        list(_NEWS_CONFLICT_HINTS) + ["attacker", "side", "sides", "now", "currently"],
+    ):
+        return True
+
+    return False
+
+
+def _extract_context_city_reference(text: str) -> str:
+    """Extract a likely city from generic phrasing like 'in Hawassa'."""
+    query = (text or "").strip().lower()
+    if not query:
+        return ""
+
+    patterns = [
+        r"\b(?:in|at|for)\s+([a-zA-Z][a-zA-Z\-\.' ]*?[a-zA-Z])(?=\s+(?:and|but|so|because|the|weather|temperature)\b|[?.!,]|$)",
+        r"\bhere\s+in\s+([a-zA-Z][a-zA-Z\-\.' ]*?[a-zA-Z])(?=\s+(?:and|but|so|because|the|weather|temperature)\b|[?.!,]|$)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, query):
+            candidate = _normalize_city_candidate(match.group(1))
+            if _is_likely_city_candidate(query, candidate):
+                return candidate
+    return ""
+
+
+def _is_weather_status_intent(query: str) -> bool:
+    """Detect weather questions that do not explicitly say 'weather'."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+
+    if _contains_any_word(normalized, ["weather", "temperature"]):
+        return True
+
+    if any(
+        phrase in normalized
+        for phrase in ["how hot", "how cold", "how is it now", "how's it now", "how old is it"]
+    ):
+        return True
+
+    is_question_like = "?" in normalized or _contains_any_word(
+        normalized, ["how", "what", "check", "tell", "can", "could", "please"]
+    )
+    if not is_question_like:
+        return False
+
+    descriptive_words = ["hot", "cold", "humid", "rainy", "raining", "sunny", "chilly"]
+    if _contains_any_word(normalized, descriptive_words) and _contains_any_word(
+        normalized, ["how", "is", "it", "now", "today", "here"]
+    ):
+        return True
+    return False
+
+
+def _resolve_weather_city(query: str, allow_last_city: bool = True) -> str:
+    """Resolve the most likely city from weather-related input."""
+    extracted = _extract_weather_city(query)
+    if extracted and _is_likely_city_candidate(query, extracted):
+        return extracted
+
+    context_city = _extract_context_city_reference(query)
+    if context_city and _is_likely_city_candidate(query, context_city):
+        return context_city
+
+    candidate = _normalize_city_candidate(query)
+    if candidate and _is_likely_city_candidate(query, candidate):
+        return candidate
+
+    if allow_last_city and _last_weather_city:
+        return _last_weather_city
+
+    return ""
+
+
+def _wants_news_summary(query: str) -> bool:
+    """Return True when the user asks for situational update over plain list."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if _contains_any_word(normalized, list(_NEWS_LIST_HINTS)):
+        return False
+    if any(phrase in normalized for phrase in _NEWS_SUMMARY_HINTS):
+        return True
+    return False
+
+
+def _wants_news_meta_details(query: str) -> bool:
+    """Whether user explicitly asks for confidence/sources transparency lines."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if _contains_any_word(normalized, ["source", "sources", "confidence", "certain", "certainty"]):
+        return True
+    return "how sure" in normalized or "how reliable" in normalized
+
+
+def _extract_headline_items(news_response: str) -> list[tuple[str, str]]:
+    """Parse numbered headline lines into (title, source) tuples."""
+    items: list[tuple[str, str]] = []
+    for line in (news_response or "").splitlines():
+        match = re.match(r"^\s*\d+\.\s*(.+?)\s*\(([^()]+)\)\s*$", line.strip())
+        if not match:
+            continue
+        title = match.group(1).strip()
+        source = match.group(2).strip()
+        items.append((title, source))
+    return items
+
+
+def _build_news_confidence_line(headline_items: list[tuple[str, str]]) -> str:
+    """Build a confidence+uncertainty line from headline/source coverage."""
+    if not headline_items:
+        return ""
+    source_count = len({source for _, source in headline_items if source})
+    headline_count = len(headline_items)
+
+    if headline_count >= 4 and source_count >= 3:
+        return (
+            "Confidence: medium-high. Multiple outlets are reporting related events, "
+            "but details can still change quickly."
+        )
+    if headline_count >= 3:
+        return (
+            "Confidence: medium. Coverage is broad enough for a directional update, "
+            "but some details may still be uncertain."
+        )
+    return (
+        "Confidence: low-medium. Limited coverage right now, so treat this as an early update."
+    )
+
+
+def _build_news_sources_line(headline_items: list[tuple[str, str]]) -> str:
+    """Build a compact sources-used line from unique headline sources."""
+    sources: list[str] = []
+    for _, source in headline_items:
+        clean = source.strip()
+        if clean and clean not in sources:
+            sources.append(clean)
+    if not sources:
+        return ""
+    return f"Sources used: {'; '.join(sources[:5])}."
+
+
+def _summarize_news_update(query: str, topic: Optional[str], news_response: str) -> str:
+    """Generate a concise, human update grounded in fetched headlines."""
+    if not news_response:
+        return ""
+    lower = news_response.lower()
+    if any(
+        phrase in lower
+        for phrase in [
+            "couldn't fetch",
+            "no news",
+            "rate limit",
+            "taking too long",
+        ]
+    ):
+        return news_response
+
+    headline_items = _extract_headline_items(news_response)
+    if not headline_items:
+        return news_response
+
+    headline_block = "\n".join(
+        f"- {title} ({source})" for title, source in headline_items[:5]
+    )
+    prompt = (
+        "You are summarizing live news headlines for a user.\n"
+        "Use ONLY the headlines below. Do not invent facts.\n"
+        "Give a natural 2-3 sentence update in plain language.\n"
+        "If details are unclear or mixed, say so briefly.\n"
+        f"User request: {query}\n"
+        f"Topic: {topic or 'general'}\n"
+        f"Headlines:\n{headline_block}"
+    )
+    summary = generate_response(prompt, conversation_history=None).strip()
+    if not summary:
+        return news_response
+
+    if not _wants_news_meta_details(query):
+        return summary
+
+    confidence_line = _build_news_confidence_line(headline_items)
+    sources_line = _build_news_sources_line(headline_items)
+    extra_lines = [line for line in [confidence_line, sources_line] if line]
+    if not extra_lines:
+        return summary
+    return summary + "\n" + "\n".join(extra_lines)
+
+
+def _answer_news_followup(query: str, topic: Optional[str], news_response: str) -> str:
+    """Answer follow-up questions using fetched headlines as the sole evidence."""
+    if not news_response:
+        return ""
+    lower = news_response.lower()
+    if any(
+        phrase in lower
+        for phrase in [
+            "couldn't fetch",
+            "no news",
+            "rate limit",
+            "taking too long",
+        ]
+    ):
+        return news_response
+
+    headline_items = _extract_headline_items(news_response)
+    if not headline_items:
+        return news_response
+
+    headline_block = "\n".join(
+        f"- {title} ({source})" for title, source in headline_items[:5]
+    )
+    prompt = (
+        "You are answering a follow-up question about a live conflict update.\n"
+        "Use ONLY the headlines provided. Do not invent facts.\n"
+        "Answer directly in 1-3 sentences using plain, literal language.\n"
+        "Do not use figurative wording or unusual expressions.\n"
+        "If the headlines do not clearly identify a side, explicitly say it is unclear.\n"
+        "If multiple sides are reported attacking, say that clearly.\n"
+        f"User question: {query}\n"
+        f"Topic context: {topic or 'general'}\n"
+        f"Headlines:\n{headline_block}"
+    )
+    answer = generate_response(prompt, conversation_history=None).strip()
+    if not answer:
+        return news_response
+
+    if not _wants_news_meta_details(query):
+        return answer
+
+    confidence_line = _build_news_confidence_line(headline_items)
+    sources_line = _build_news_sources_line(headline_items)
+    extra_lines = [line for line in [confidence_line, sources_line] if line]
+    if not extra_lines:
+        return answer
+    return answer + "\n" + "\n".join(extra_lines)
+
+
 def process_user_query(user_input: str) -> ChatResponse:
     """Process one user message and return assistant output for web mode."""
-    global _pending_weather_city
+    global _pending_weather_city, _last_weather_city, _last_news_topic, _last_news_headline_response
 
     query = (user_input or "").strip()
     if not query:
@@ -582,8 +957,17 @@ def process_user_query(user_input: str) -> ChatResponse:
     normalized = query.lower()
     memory.add_user_message(query)
 
+    context_city = _extract_context_city_reference(query)
+    if context_city and _contains_any_word(
+        normalized, ["weather", "temperature", "hot", "cold", "humid", "rain", "sunny", "chilly"]
+    ):
+        _last_weather_city = context_city
+
     if any(word in normalized for word in ["bye", "goodbye", "exit", "quit", "stop"]):
         _pending_weather_city = False
+        _last_weather_city = ""
+        _last_news_topic = ""
+        _last_news_headline_response = ""
         response = "Goodbye! Talk to you soon!"
         memory.add_assistant_message(response)
         return ChatResponse(response=response, should_exit=True)
@@ -609,25 +993,25 @@ def process_user_query(user_input: str) -> ChatResponse:
             "battery",
             "system",
             "help",
+            "clear",
+            "history",
+            "forget",
+            "reset",
+            "conversation",
         ]
     ):
-        city = _extract_weather_city(query)
-        if not city:
-            candidate = _normalize_city_candidate(query)
-            city = candidate if _is_likely_city_candidate(query, candidate) else ""
+        city = _resolve_weather_city(query, allow_last_city=False)
         if city:
             _pending_weather_city = False
+            _last_weather_city = city
             response = get_weather(city)
         else:
             response = "Please tell me the city name, for example: Addis Ababa."
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
-    if _contains_any_word(normalized, ["weather", "temperature"]):
-        city = _extract_weather_city(query)
-        if not city:
-            candidate = _normalize_city_candidate(query)
-            city = candidate if _is_likely_city_candidate(query, candidate) else ""
+    if _is_weather_status_intent(query):
+        city = _resolve_weather_city(query, allow_last_city=True)
         if not city:
             _pending_weather_city = True
             response = (
@@ -635,7 +1019,25 @@ def process_user_query(user_input: str) -> ChatResponse:
             )
         else:
             _pending_weather_city = False
+            _last_weather_city = city
             response = get_weather(city)
+        memory.add_assistant_message(response)
+        return ChatResponse(response=response)
+
+    if _is_news_followup_question(query):
+        topic = _extract_news_followup_topic(query) or _last_news_topic
+        can_reuse_cached = (
+            bool(_last_news_headline_response)
+            and not _wants_news_refresh(query)
+            and _topics_related(topic, _last_news_topic)
+        )
+        if can_reuse_cached:
+            headline_response = _last_news_headline_response
+        else:
+            headline_response = get_top_headlines(topic if topic else None)
+        response = _answer_news_followup(query, topic if topic else None, headline_response)
+        _last_news_topic = topic if topic else _GENERAL_NEWS_TOPIC
+        _last_news_headline_response = headline_response
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
@@ -653,7 +1055,13 @@ def process_user_query(user_input: str) -> ChatResponse:
 
     if _is_news_intent(query):
         topic = _extract_news_topic(query)
-        response = get_top_headlines(topic if topic else None)
+        headline_response = get_top_headlines(topic if topic else None)
+        if _wants_news_summary(query):
+            response = _summarize_news_update(query, topic if topic else None, headline_response)
+        else:
+            response = headline_response
+        _last_news_topic = topic if topic else _GENERAL_NEWS_TOPIC
+        _last_news_headline_response = headline_response
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 
@@ -741,6 +1149,9 @@ def process_user_query(user_input: str) -> ChatResponse:
 
     if any(p in normalized for p in ["clear history", "forget", "reset conversation"]):
         _pending_weather_city = False
+        _last_weather_city = ""
+        _last_news_topic = ""
+        _last_news_headline_response = ""
         memory.clear()
         response = "I cleared our conversation history."
         memory.add_assistant_message(response)

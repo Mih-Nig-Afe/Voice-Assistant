@@ -142,6 +142,10 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
 - News/update phrasing (for example `give me an update on Iran and Israel`) now routes to live headlines instead of generic model guesses.
 - Weather follow-up mode now rejects conversational noise as a city (for example `i'm kinda feeling too`) and asks for the city again.
+- News update requests are summarized into a short human-style situation update (grounded in fetched headlines) instead of always reading a full list.
+- News summary/follow-up answers now default to natural human-style output; confidence/source lines are included only when you explicitly ask for them.
+- News follow-up questions (for example `who is attacking now?`) now stay in the news context and answer from recent headlines instead of falling into Wikipedia topic lookup.
+- Weather context now remembers recent city mentions in hot/cold conversations, so follow-ups like `how hot is it now?` can reuse the same city.
 
 ### Docker Input Troubleshooting
 
@@ -259,13 +263,13 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `OPENWEATHER_API_KEY` | *(optional)* | OpenWeather API key for weather |
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
 | `AI_BACKEND` | `groq` | AI backend (`groq` or `huggingface`) |
-| `AI_MODEL` | `moonshotai/kimi-k2-instruct-0905` | Primary model name for the AI backend |
-| `AI_MODEL_FALLBACKS` | `qwen/qwen3-32b,llama-3.3-70b-versatile` | Comma-separated fallback model order if primary fails |
+| `AI_MODEL` | `moonshotai/kimi-k2-instruct` | Primary model name for the AI backend |
+| `AI_MODEL_FALLBACKS` | `moonshotai/kimi-k2-instruct-0905,llama-3.3-70b-versatile,qwen/qwen3-32b` | Comma-separated fallback model order if primary fails |
 | `STT_MODEL` | `whisper-large-v3` | Speech-to-text model for web fallback (`whisper-large-v3` or `whisper-large-v3-turbo`) |
 | `STT_LANGUAGE` | `en` | Language hint for fallback speech transcription |
 | `STT_PROMPT` | *(preset city-bias prompt)* | Optional prompt to improve recognition of names and places |
 | `WEB_TTS_BACKEND` | `edge` | Web speech output backend (`edge`, `browser`, or `auto`) |
-| `WEB_TTS_VOICE` | `en-US-AriaNeural` | Neural voice ID used when `WEB_TTS_BACKEND=edge` |
+| `WEB_TTS_VOICE` | `en-US-AvaMultilingualNeural` | Neural voice ID used when `WEB_TTS_BACKEND=edge` |
 | `WEB_TTS_RATE` | `+0%` | Neural TTS speaking rate |
 | `WEB_TTS_PITCH` | `+0Hz` | Neural TTS pitch |
 | `WEB_TTS_MAX_CHARS` | `900` | Max response text length accepted by `/api/speech/synthesize` |
@@ -281,14 +285,14 @@ See `.env.example` for the full list of configurable options.
 
 ### 1. Groq API (AI Conversations) — **Recommended, Required for best experience**
 - **URL:** [https://console.groq.com](https://console.groq.com)
-- **What it does:** Powers intelligent AI conversations using Llama 3.3 70B
+- **What it does:** Powers intelligent AI conversations using modern Groq-hosted large models (default: Kimi K2 Instruct)
 - **How to get a key:**
   1. Go to [console.groq.com](https://console.groq.com) and sign up (Google/GitHub login)
   2. Click "API Keys" in the left sidebar
   3. Click "Create API Key", give it a name, and copy the key
   4. Add to your `.env`: `GROQ_API_KEY=gsk_your_key_here`
 - **Free tier limits:** 30 requests/min, 14,400 requests/day, 6,000 tokens/min
-- **Why Groq?** Fastest free LLM API available; runs Llama 3.3 70B with sub-second latency
+- **Why Groq?** Fast low-latency LLM API with multiple strong model options and easy fallback chaining
 
 ### 2. OpenWeather API (Weather)
 - **URL:** [https://openweathermap.org/api](https://openweathermap.org/api)
@@ -340,7 +344,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Acknowledgements
 
-- AI powered by [Groq](https://groq.com/) (Llama 3.3 70B) with [HuggingFace](https://huggingface.co/) fallback
+- AI powered by [Groq](https://groq.com/) (Kimi/Qwen/Llama model chain) with [HuggingFace](https://huggingface.co/) fallback
 - Speech via [SpeechRecognition](https://pypi.org/project/SpeechRecognition/) and [pyttsx3](https://pypi.org/project/pyttsx3/)
 - Weather by [OpenWeather](https://openweathermap.org/) · News by [GNews](https://gnews.io/)
 - Jokes by [JokeAPI](https://jokeapi.dev/) · Definitions by [Free Dictionary API](https://dictionaryapi.dev/)

@@ -41,6 +41,20 @@ _TOPIC_TOKEN_STOPWORDS = {
     "case",
     "situation",
 }
+_GENERIC_CONFLICT_KEYWORDS = {
+    "war",
+    "conflict",
+    "attack",
+    "attacking",
+    "attacked",
+    "strike",
+    "strikes",
+    "fighting",
+    "fight",
+    "missile",
+    "ceasefire",
+}
+_WEAK_TOPIC_KEYWORDS = {"us"}
 
 
 def _topic_keywords(topic: str) -> list[str]:
@@ -65,26 +79,60 @@ def _keyword_pattern(keyword: str) -> str:
     return rf"\b{re.escape(keyword)}\b"
 
 
-def _score_news_text_relevance(text: str, keywords: list[str]) -> int:
-    """Score relevance of text against topic keywords."""
+def _matched_topic_keywords(text: str, keywords: list[str]) -> set[str]:
+    """Return set of keywords matched in text using exact+light stem checks."""
     lowered = (text or "").lower()
     if not lowered or not keywords:
-        return 0
+        return set()
 
     text_tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9\-']*", lowered)
-    score = 0
+    matched: set[str] = set()
     for keyword in keywords:
         pattern = _keyword_pattern(keyword)
         if re.search(pattern, lowered):
-            score += 1
+            matched.add(keyword)
             continue
-
-        # Mild fuzzy matching for simple stems like "technology" -> "tech".
         if len(keyword) >= 5:
             stem = keyword[:4]
             if any(token.startswith(stem) for token in text_tokens):
-                score += 1
+                matched.add(keyword)
+    return matched
+
+
+def _score_news_text_relevance(text: str, keywords: list[str]) -> int:
+    """Score relevance of text against topic keywords."""
+    if not text or not keywords:
+        return 0
+
+    matched = _matched_topic_keywords(text, keywords)
+    score = 0
+    for keyword in matched:
+        if keyword in _WEAK_TOPIC_KEYWORDS:
+            score += 1
+        elif keyword in _GENERIC_CONFLICT_KEYWORDS:
+            score += 2
+        else:
+            score += 3
     return score
+
+
+def _is_topic_match_sufficient(matched_keywords: set[str], keywords: list[str]) -> bool:
+    """Gate noisy matches so entity-heavy topics stay on-topic."""
+    if not keywords:
+        return True
+    if not matched_keywords:
+        return False
+
+    specific_keywords = {
+        keyword
+        for keyword in keywords
+        if keyword not in _WEAK_TOPIC_KEYWORDS and keyword not in _GENERIC_CONFLICT_KEYWORDS
+    }
+    if specific_keywords and not matched_keywords.intersection(specific_keywords):
+        return False
+
+    min_keyword_matches = 2 if len(keywords) >= 3 else 1
+    return len(matched_keywords) >= min_keyword_matches
 
 
 def _rank_articles_for_topic(articles: list[dict], topic: str) -> list[dict]:
@@ -98,9 +146,20 @@ def _rank_articles_for_topic(articles: list[dict], topic: str) -> list[dict]:
         title = str(article.get("title", ""))
         description = str(article.get("description", ""))
         content = str(article.get("content", ""))
+        matched = _matched_topic_keywords(f"{title} {description} {content}", keywords)
+        if not _is_topic_match_sufficient(matched, keywords):
+            continue
         title_score = _score_news_text_relevance(title, keywords)
         body_score = _score_news_text_relevance(f"{description} {content}", keywords)
-        total = (title_score * 3) + body_score
+        specificity_bonus = len(
+            {
+                keyword
+                for keyword in matched
+                if keyword not in _WEAK_TOPIC_KEYWORDS
+                and keyword not in _GENERIC_CONFLICT_KEYWORDS
+            }
+        )
+        total = (title_score * 3) + body_score + (specificity_bonus * 2)
         scored.append((total, article))
 
     ranked = [article for score, article in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
@@ -248,7 +307,20 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
             if keywords:
                 scored = []
                 for headline in headlines:
-                    score = _score_news_text_relevance(headline, keywords)
+                    matched = _matched_topic_keywords(headline, keywords)
+                    if not _is_topic_match_sufficient(matched, keywords):
+                        continue
+                    specificity_bonus = len(
+                        {
+                            keyword
+                            for keyword in matched
+                            if keyword not in _WEAK_TOPIC_KEYWORDS
+                            and keyword not in _GENERIC_CONFLICT_KEYWORDS
+                        }
+                    )
+                    score = _score_news_text_relevance(headline, keywords) + (
+                        specificity_bonus * 2
+                    )
                     scored.append((score, headline))
                 ranked = [
                     headline
