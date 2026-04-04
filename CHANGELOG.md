@@ -4,6 +4,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.21] - 2026-04-04
+
+### Fixed
+
+- Added runtime AI config refresh from `.env` so changing `AI_MODEL`/`AI_MODEL_FALLBACKS`/`AI_BACKEND` updates active model selection without code edits.
+- Added runtime backend reset when AI env signature changes to avoid stale clients after model/backend updates.
+
+### Security
+
+- Added `.DS_Store` to `.gitignore` and removed the tracked root `.DS_Store` artifact from the repository workspace.
+- Performed tracked-file secret-pattern scan and confirmed no committed credential material (only placeholders in docs/examples).
+
+### Tested
+
+- Added tests covering runtime AI-config refresh behavior and env-driven config reload.
+- Full suite passing: `153 passed`.
+
 ## [1.2.20] - 2026-04-04
 
 ### Changed

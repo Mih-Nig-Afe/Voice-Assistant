@@ -174,3 +174,4 @@ cython_debug/
 # Project specific
 models/
 *.wav.bak
+.DS_Store

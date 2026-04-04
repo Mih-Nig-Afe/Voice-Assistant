@@ -25,6 +25,8 @@ _groq_client = None
 _hf_generator = None
 _initialized: bool = False
 _backend: str = "none"
+_RUNTIME_CONFIG_SIGNATURE: Optional[tuple[str, str, str, str, int, int]] = None
+_LAST_MODEL_USED: Optional[str] = None
 
 # System prompt for conversational AI
 _SYSTEM_PROMPT = (
@@ -39,6 +41,45 @@ _AI_MODEL_HARD_FALLBACK = "llama-3.3-70b-versatile"
 _MODEL_FAILURE_COUNTS: dict[str, int] = {}
 _MODEL_EMPTY_COUNTS: dict[str, int] = {}
 _MODEL_BLOCKLIST: set[str] = set()
+
+
+def _runtime_config_signature() -> tuple[str, str, str, str, int, int]:
+    """Build a stable signature for env-driven AI settings."""
+    return (
+        Config.AI_BACKEND,
+        Config.AI_MODEL,
+        Config.AI_MODEL_FALLBACKS,
+        Config.GROQ_API_KEY,
+        Config.AI_MAX_LENGTH,
+        Config.AI_MAX_HISTORY,
+    )
+
+
+def _refresh_runtime_config() -> None:
+    """
+    Reload AI-related settings from .env and reset backend when changed.
+
+    This ensures model/backend values edited in .env are applied at runtime.
+    """
+    global _initialized, _backend, _groq_client, _hf_generator, _RUNTIME_CONFIG_SIGNATURE
+
+    Config.reload_ai_settings()
+    current_signature = _runtime_config_signature()
+    if _RUNTIME_CONFIG_SIGNATURE is None:
+        _RUNTIME_CONFIG_SIGNATURE = current_signature
+        return
+    if current_signature == _RUNTIME_CONFIG_SIGNATURE:
+        return
+
+    logger.info("AI settings changed in .env; reloading AI backend/runtime.")
+    _RUNTIME_CONFIG_SIGNATURE = current_signature
+    _initialized = False
+    _backend = "none"
+    _groq_client = None
+    _hf_generator = None
+    _MODEL_FAILURE_COUNTS.clear()
+    _MODEL_EMPTY_COUNTS.clear()
+    _MODEL_BLOCKLIST.clear()
 
 
 def _clean_generated_text(text: str) -> str:
@@ -192,6 +233,7 @@ def generate_response(
     if not prompt:
         return "I didn't catch that clearly. Please ask again."
 
+    _refresh_runtime_config()
     _load_backend()
 
     if _backend == "groq":
@@ -209,6 +251,7 @@ def _generate_groq(
     history: Optional[list[dict[str, str]]] = None,
 ) -> str:
     """Generate response via Groq API with conversation context."""
+    global _LAST_MODEL_USED
     try:
         if _groq_client is None:
             return "AI service is not ready yet."
@@ -235,6 +278,7 @@ def _generate_groq(
                 text = _clean_generated_text(content or "")
                 if text:
                     _record_model_success(model_name)
+                    _LAST_MODEL_USED = model_name
                     if model_name != Config.AI_MODEL:
                         logger.warning(
                             "Primary model '%s' failed/empty; using fallback '%s'.",
@@ -272,6 +316,7 @@ def _generate_groq(
 
 def _generate_huggingface(prompt: str) -> str:
     """Generate response via local HuggingFace model."""
+    global _LAST_MODEL_USED
     try:
         if _hf_generator is None:
             return "Local AI model is not loaded yet."
@@ -281,6 +326,7 @@ def _generate_huggingface(prompt: str) -> str:
         text: str = _clean_generated_text(response[0].get("generated_text", ""))
         if not text:
             return "I couldn't generate a response just now."
+        _LAST_MODEL_USED = "EleutherAI/gpt-neo-125M"
         logger.debug("HuggingFace response (%d chars)", len(text))
         return text
     except Exception as e:
@@ -298,3 +344,8 @@ def get_backend_name() -> str:
     """Return the name of the active AI backend."""
     _load_backend()
     return _backend
+
+
+def get_last_model_used() -> Optional[str]:
+    """Return the last model that produced a successful response."""
+    return _LAST_MODEL_USED

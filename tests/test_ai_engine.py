@@ -14,6 +14,8 @@ def reset_model_runtime_state() -> None:
     ai_engine._MODEL_FAILURE_COUNTS.clear()
     ai_engine._MODEL_EMPTY_COUNTS.clear()
     ai_engine._MODEL_BLOCKLIST.clear()
+    ai_engine._LAST_MODEL_USED = None
+    ai_engine._RUNTIME_CONFIG_SIGNATURE = ai_engine._runtime_config_signature()
 
 
 class TestAIEngine:
@@ -69,6 +71,8 @@ class TestAIEngine:
 
         result = generate_response("How are you?")
         assert "doing great" in result.lower()
+        call_args = mock_client.chat.completions.create.call_args
+        assert call_args.kwargs.get("model") == Config.AI_MODEL
 
     @patch("voice_assistant.ai_engine._backend", "groq")
     @patch("voice_assistant.ai_engine._initialized", True)
@@ -115,6 +119,52 @@ class TestAIEngine:
         result = generate_response("hello")
         assert "fallback response" in result.lower()
         assert mock_client.chat.completions.create.call_count == 2
+
+    @patch("voice_assistant.ai_engine.Config.reload_ai_settings")
+    def test_runtime_refresh_reloads_backend_when_ai_signature_changes(self, mock_reload):
+        original = (
+            Config.AI_BACKEND,
+            Config.AI_MODEL,
+            Config.AI_MODEL_FALLBACKS,
+            Config.GROQ_API_KEY,
+            Config.AI_MAX_LENGTH,
+            Config.AI_MAX_HISTORY,
+        )
+        ai_engine._initialized = True
+        ai_engine._backend = "groq"
+        ai_engine._groq_client = object()
+        ai_engine._RUNTIME_CONFIG_SIGNATURE = (
+            "groq",
+            "old/model",
+            "old/fallback",
+            "key",
+            150,
+            20,
+        )
+
+        def mutate_signature() -> None:
+            Config.AI_BACKEND = "groq"
+            Config.AI_MODEL = "new/model"
+            Config.AI_MODEL_FALLBACKS = "fallback/a,fallback/b"
+            Config.GROQ_API_KEY = "key"
+            Config.AI_MAX_LENGTH = 150
+            Config.AI_MAX_HISTORY = 20
+
+        mock_reload.side_effect = mutate_signature
+        ai_engine._refresh_runtime_config()
+
+        assert ai_engine._initialized is False
+        assert ai_engine._backend == "none"
+        assert ai_engine._groq_client is None
+
+        (
+            Config.AI_BACKEND,
+            Config.AI_MODEL,
+            Config.AI_MODEL_FALLBACKS,
+            Config.GROQ_API_KEY,
+            Config.AI_MAX_LENGTH,
+            Config.AI_MAX_HISTORY,
+        ) = original
 
     @patch("voice_assistant.ai_engine._backend", "groq")
     @patch("voice_assistant.ai_engine._initialized", True)

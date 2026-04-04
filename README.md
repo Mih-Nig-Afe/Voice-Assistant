@@ -296,6 +296,8 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `TTS_ENGINE` | `auto` | TTS engine (`auto` or `pyttsx3`) |
 | `LISTEN_TIMEOUT` | `8` | Speech recognition timeout (seconds) |
 
+AI runtime note: `AI_BACKEND`, `AI_MODEL`, `AI_MODEL_FALLBACKS`, `AI_MAX_LENGTH`, and `AI_MAX_HISTORY` are reloaded from `.env` at request time, so model changes in `.env` are applied by the running assistant.
+
 See `.env.example` for the full list of configurable options.
 
 ---

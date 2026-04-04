@@ -212,3 +212,26 @@ class Config:
         """Return Groq API key or None if not configured."""
         key = cls.GROQ_API_KEY
         return key if cls._is_valid_secret(key) else None
+
+    @classmethod
+    def reload_ai_settings(cls) -> None:
+        """
+        Refresh AI-related configuration from .env at runtime.
+
+        This lets model/backends changed in .env take effect without code edits.
+        A process restart is still recommended operationally, but not required.
+        """
+        load_dotenv(_PROJECT_ROOT / ".env", override=True)
+
+        cls.GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+        cls.AI_BACKEND = os.getenv("AI_BACKEND", "groq")
+        cls.AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
+        cls.AI_MODEL_FALLBACKS = os.getenv(
+            "AI_MODEL_FALLBACKS",
+            "openai/gpt-oss-20b,llama-3.3-70b-versatile,qwen/qwen3-32b",
+        )
+        cls.AI_MAX_LENGTH = int(os.getenv("AI_MAX_LENGTH", "150"))
+        cls.AI_MAX_HISTORY = int(os.getenv("AI_MAX_HISTORY", "20"))
+        cls.REQUIRE_GROQ_API_KEY = (
+            os.getenv("REQUIRE_GROQ_API_KEY", "false").strip().lower() == "true"
+        )

@@ -54,3 +54,25 @@ class TestConfig:
         """Phrase time limit should be a positive integer."""
         assert Config.PHRASE_TIME_LIMIT > 0
 
+    @patch("voice_assistant.config.load_dotenv")
+    def test_reload_ai_settings_reads_environment(self, _mock_load_dotenv):
+        """reload_ai_settings should apply AI values from environment variables."""
+        with patch.dict(
+            os.environ,
+            {
+                "AI_BACKEND": "groq",
+                "AI_MODEL": "openai/gpt-oss-120b",
+                "AI_MODEL_FALLBACKS": "openai/gpt-oss-20b,llama-3.3-70b-versatile",
+                "AI_MAX_LENGTH": "222",
+                "AI_MAX_HISTORY": "19",
+                "REQUIRE_GROQ_API_KEY": "true",
+            },
+            clear=False,
+        ):
+            Config.reload_ai_settings()
+
+        assert Config.AI_MODEL == "openai/gpt-oss-120b"
+        assert Config.AI_MODEL_FALLBACKS.startswith("openai/gpt-oss-20b")
+        assert Config.AI_MAX_LENGTH == 222
+        assert Config.AI_MAX_HISTORY == 19
+        assert Config.REQUIRE_GROQ_API_KEY is True
