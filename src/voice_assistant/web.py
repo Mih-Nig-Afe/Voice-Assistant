@@ -45,7 +45,22 @@ _pending_weather_city: bool = False
 _last_weather_city: str = ""
 _last_news_topic: str = ""
 _last_news_headline_response: str = ""
+_last_selected_headline_index: int = 0
+_last_selected_headline_title: str = ""
+_last_selected_headline_source: str = ""
 _groq_audio_client = None
+_ORDINAL_WORDS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
 _CITY_STOPWORDS = {
     "weather",
     "temperature",
@@ -383,6 +398,25 @@ def _extract_transcript_text(response: object) -> str:
     return ""
 
 
+def _sanitize_transcript_text(text: str) -> str:
+    """Remove prompt leakage/noise from STT output before routing it."""
+    clean = re.sub(r"\s+", " ", (text or "")).strip()
+    if not clean:
+        return ""
+
+    leak_patterns = [
+        r"\btranscribe spoken assistant requests clearly\.?\s*",
+        r"\bcommon city names may include [^.]+\.?\s*",
+        r"\bcommon world-news terms may include [^.]+\.?\s*",
+    ]
+    for pattern in leak_patterns:
+        clean = re.sub(pattern, "", clean, flags=re.IGNORECASE)
+
+    clean = re.sub(r"^[\s,.;:!?-]+", "", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean
+
+
 def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
     """Transcribe audio bytes using Groq whisper API."""
     global _groq_audio_client
@@ -420,7 +454,7 @@ def _transcribe_audio_bytes(audio_bytes: bytes, file_name: str) -> str:
         request_payload["prompt"] = prompt
 
     response = _groq_audio_client.audio.transcriptions.create(**request_payload)
-    return _extract_transcript_text(response)
+    return _sanitize_transcript_text(_extract_transcript_text(response))
 
 
 def _normalize_tts_text(text: str) -> str:
@@ -843,19 +877,87 @@ def _extract_headline_reference_index(query: str) -> Optional[int]:
             continue
         if index >= 1:
             return index
+
+    ordinal_words = "|".join(_ORDINAL_WORDS.keys())
+    reference_terms = (
+        r"headline|head\s*line|headlight|head\s+light|airline|line|item|entry|story|article|"
+        r"hit|one|result"
+    )
+    word_patterns = [
+        rf"\b({ordinal_words})\s+(?:{reference_terms})\b",
+        rf"\b(?:{reference_terms})\s+({ordinal_words})\b",
+        rf"\b({ordinal_words})\s+(?:one|item)\b",
+        rf"\bforce\s+(?:headline|head\s*line|headlight|head\s+light)\b",
+    ]
+    for pattern in word_patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        word = (match.group(1) or "").strip().lower() if match.groups() else ""
+        if not word and "force" in pattern and "force" in normalized:
+            return 1
+        if word in _ORDINAL_WORDS:
+            return _ORDINAL_WORDS[word]
+
+    if (
+        _last_news_headline_response
+        and "on the news" in normalized
+        and re.search(rf"\b({ordinal_words})\b", normalized)
+    ):
+        word = re.search(rf"\b({ordinal_words})\b", normalized).group(1)
+        return _ORDINAL_WORDS.get(word)
     return None
+
+
+def _should_reuse_selected_headline(query: str) -> bool:
+    """Return True when pronouns should resolve to the last selected headline."""
+    normalized = (query or "").strip().lower()
+    if not normalized or not _last_selected_headline_title:
+        return False
+    phrases = [
+        "more on it",
+        "more about it",
+        "more on that",
+        "more about that",
+        "more on this",
+        "more about this",
+        "details on it",
+        "details on that",
+        "details on this",
+        "explain it",
+        "explain that",
+        "what about it",
+        "what about that",
+    ]
+    return any(phrase in normalized for phrase in phrases)
 
 
 def _resolve_headline_reference(query: str) -> Optional[tuple[int, str, str]]:
     """Resolve referenced cached headline as (index, title, source)."""
     index = _extract_headline_reference_index(query)
-    if not index:
-        return None
-    items = _extract_headline_items(_last_news_headline_response)
-    if not items or index > len(items):
-        return None
-    title, source = items[index - 1]
-    return index, title, source
+    if index:
+        items = _extract_headline_items(_last_news_headline_response)
+        if not items or index > len(items):
+            return None
+        title, source = items[index - 1]
+        return index, title, source
+
+    if _should_reuse_selected_headline(query):
+        return (
+            _last_selected_headline_index,
+            _last_selected_headline_title,
+            _last_selected_headline_source,
+        )
+
+    return None
+
+
+def _clear_selected_headline() -> None:
+    """Reset cached selected-headline context."""
+    global _last_selected_headline_index, _last_selected_headline_title, _last_selected_headline_source
+    _last_selected_headline_index = 0
+    _last_selected_headline_title = ""
+    _last_selected_headline_source = ""
 
 
 def _is_topic_specific_news_payload(news_response: str) -> bool:
@@ -924,6 +1026,20 @@ def _wants_headline_deep_dive(query: str) -> bool:
             "explain",
         ],
     )
+
+
+def _is_selected_headline_focus_query(query: str) -> bool:
+    """Return True when user is focusing on one chosen headline, not asking for a fresh search."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if "on the news" in normalized or _should_reuse_selected_headline(query):
+        return True
+
+    headline_index = _extract_headline_reference_index(query)
+    if not headline_index:
+        return False
+    return not bool(_extract_news_followup_topic(query))
 
 
 def _build_selected_headline_deep_dive(
@@ -1929,10 +2045,15 @@ def _answer_news_followup(
 def process_user_query(user_input: str) -> ChatResponse:
     """Process one user message and return assistant output for web mode."""
     global _pending_weather_city, _last_weather_city, _last_news_topic, _last_news_headline_response
+    global _last_selected_headline_index, _last_selected_headline_title, _last_selected_headline_source
 
     query = (user_input or "").strip()
     if not query:
         return ChatResponse(response="Please say or type something so I can help.")
+    if re.search(r"(?:\.\.\.|…)\s*$", query) or re.search(
+        r"\b(?:and|or|but|so|because|with)\s*$", query.lower()
+    ):
+        return ChatResponse(response="I only caught part of that. Please say it again.")
 
     normalized = query.lower()
     memory.add_user_message(query)
@@ -1949,6 +2070,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         _last_weather_city = ""
         _last_news_topic = ""
         _last_news_headline_response = ""
+        _clear_selected_headline()
         response = "Goodbye! Talk to you soon!"
         memory.add_assistant_message(response)
         return ChatResponse(response=response, should_exit=True)
@@ -2020,9 +2142,12 @@ def process_user_query(user_input: str) -> ChatResponse:
     headline_reference = _resolve_headline_reference(query)
     if headline_reference:
         index, selected_title, selected_source = headline_reference
+        _last_selected_headline_index = index
+        _last_selected_headline_title = selected_title
+        _last_selected_headline_source = selected_source
         topic = _choose_headline_followup_topic(query, selected_title)
 
-        if _wants_headline_deep_dive(query):
+        if _wants_headline_deep_dive(query) or _is_selected_headline_focus_query(query):
             response = _build_selected_headline_deep_dive(
                 query,
                 index,
@@ -2049,6 +2174,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         return ChatResponse(response=response)
 
     if _is_news_followup_question(query):
+        _clear_selected_headline()
         topic = _extract_news_followup_topic(query) or _last_news_topic
         can_reuse_cached = (
             bool(_last_news_headline_response)
@@ -2082,6 +2208,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         return ChatResponse(response=response)
 
     if _is_news_intent(query):
+        _clear_selected_headline()
         topic = _extract_news_topic(query)
         headline_response = get_top_headlines(topic if topic else None)
         if _wants_news_summary(query):
@@ -2182,6 +2309,7 @@ def process_user_query(user_input: str) -> ChatResponse:
         _last_weather_city = ""
         _last_news_topic = ""
         _last_news_headline_response = ""
+        _clear_selected_headline()
         memory.clear()
         response = "I cleared our conversation history."
         memory.add_assistant_message(response)
@@ -2273,7 +2401,7 @@ def transcribe_audio(payload: SpeechTranscribeRequest) -> SpeechTranscribeRespon
             detail="Speech transcription failed. Please try again.",
         ) from exc
 
-    return SpeechTranscribeResponse(transcript=transcript)
+    return SpeechTranscribeResponse(transcript=_sanitize_transcript_text(transcript))
 
 
 @app.post("/api/speech/synthesize", response_model=SpeechSynthesizeResponse)

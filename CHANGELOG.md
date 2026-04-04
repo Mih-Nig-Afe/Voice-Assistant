@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file.
 - Added parallel curated-feed fetch, topic scoring, and cross-source dedupe for conflict headlines.
 - Switched the default Groq primary model to `llama-3.3-70b-versatile` and moved `openai/gpt-oss-120b` into the fallback chain.
 - Added query-aware conflict headline prioritization so explainer questions prefer explainer-style sources and live-update questions prefer current reporting.
+- Stripped Groq STT prompt leakage from transcripts before routing so hidden speech hints no longer surface as assistant replies.
+- Expanded headline-reference parsing for speech errors like `first line`, `first hit on the news`, and `Force Head Light`, while preserving topic-refresh behavior for explicit topical follow-ups.
+- Added selected-headline memory for pronoun follow-ups like `more on it` so the assistant stays anchored to the last chosen story.
+- Guarded truncated speech fragments like `Cameras and...` so partial captures prompt for a retry instead of producing unrelated answers.
 
 ### Changed
 
@@ -35,7 +39,8 @@ All notable changes to this project are documented in this file.
 - Added regression tests for news follow-up date extraction from source metadata and origin-question handling.
 - Added regression tests for curated conflict RSS routing, fallback behavior, and duplicate/off-topic filtering.
 - Added regression tests for query-aware conflict headline prioritization and default model config changes.
-- Full suite passing: `173 passed`.
+- Added regression tests for STT prompt-leak cleanup, selected-headline reuse, speech-misheard headline references, and truncated-fragment handling.
+- Full suite passing: `179 passed`.
 
 ## [1.2.21] - 2026-04-04
 

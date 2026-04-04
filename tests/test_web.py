@@ -14,6 +14,9 @@ def reset_web_runtime_state() -> None:
     web._last_weather_city = ""
     web._last_news_topic = ""
     web._last_news_headline_response = ""
+    web._last_selected_headline_index = 0
+    web._last_selected_headline_title = ""
+    web._last_selected_headline_source = ""
 
 
 def test_web_help_command_returns_capabilities() -> None:
@@ -279,6 +282,72 @@ def test_web_news_headline_reference_followup_summarizes_selected_topic() -> Non
     mocked_news.assert_called_once_with("iran strikes")
     mocked_summary.assert_called_once()
     assert response.response == "Focused Iran strikes update."
+
+
+def test_web_news_headline_reference_understands_first_line_phrase() -> None:
+    web._last_news_headline_response = (
+        "Here are the latest curated conflict headlines on iran israel us:\n"
+        "1. Iranians are leaving the country just to get internet (NPR, 2026-04-03)\n"
+        "2. Iran war live: US-Israel attacks hit petrochemical, nuclear sites in Iran (Al Jazeera, 2026-04-04)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value=(
+            "The first headline says some Iranians are leaving the country to get internet access, "
+            "but details are still limited from that single headline."
+        ),
+    ) as mocked_generate:
+        response = process_user_query("More on the first line.")
+    mocked_generate.assert_called_once()
+    assert "first headline says" in response.response.lower()
+
+
+def test_web_news_headline_reference_reuses_selected_headline_for_more_on_it() -> None:
+    web._last_news_headline_response = (
+        "Here are the latest curated conflict headlines on iran israel us:\n"
+        "1. Iranians are leaving the country just to get internet (NPR, 2026-04-03)\n"
+        "2. Iran war live: US-Israel attacks hit petrochemical, nuclear sites in Iran (Al Jazeera, 2026-04-04)"
+    )
+    web._last_selected_headline_index = 1
+    web._last_selected_headline_title = "Iranians are leaving the country just to get internet"
+    web._last_selected_headline_source = "NPR, 2026-04-03"
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="That first headline is about Iranians leaving the country to access internet service.",
+    ) as mocked_generate:
+        response = process_user_query("More on it.")
+    mocked_generate.assert_called_once()
+    assert "internet service" in response.response.lower()
+
+
+def test_web_news_headline_reference_handles_first_hit_on_the_news_phrase() -> None:
+    web._last_news_headline_response = (
+        "Here are the latest curated conflict headlines on iran israel us:\n"
+        "1. Iranians are leaving the country just to get internet (NPR, 2026-04-03)\n"
+        "2. Iran war live: US-Israel attacks hit petrochemical, nuclear sites in Iran (Al Jazeera, 2026-04-04)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="The first headline is about Iranians leaving the country just to get internet access.",
+    ) as mocked_generate:
+        response = process_user_query("This is the first hit on the news.")
+    mocked_generate.assert_called_once()
+    assert "first headline" in response.response.lower()
+
+
+def test_web_news_headline_reference_handles_force_head_light_phrase() -> None:
+    web._last_news_headline_response = (
+        "Here are the latest curated conflict headlines on iran israel us:\n"
+        "1. Iranians are leaving the country just to get internet (NPR, 2026-04-03)\n"
+        "2. Iran war live: US-Israel attacks hit petrochemical, nuclear sites in Iran (Al Jazeera, 2026-04-04)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="The first headline says Iranians are leaving the country to get internet access.",
+    ) as mocked_generate:
+        response = process_user_query("Give me more details on the Force Head Light.")
+    mocked_generate.assert_called_once()
+    assert "first headline says" in response.response.lower()
 
 
 def test_web_news_headline_reference_followup_handles_general_fallback_payload() -> (
@@ -741,6 +810,30 @@ def test_web_transcribe_endpoint_returns_text() -> None:
     assert response.json() == {"transcript": "hello from mic"}
     mocked.assert_called_once()
     assert mocked.call_args.args[0] == sample_audio
+
+
+def test_web_transcribe_endpoint_strips_stt_prompt_leak_text() -> None:
+    client = TestClient(app)
+    sample_audio = b"audio-bytes" * 200
+    payload = base64.b64encode(sample_audio).decode("ascii")
+    leaked = (
+        "Common world-news terms may include Iran, Israel, US, and USA. "
+        "Update me on Iran and Israel."
+    )
+    with patch("voice_assistant.web._transcribe_audio_bytes", return_value=leaked):
+        response = client.post(
+            "/api/speech/transcribe",
+            json={"audio_base64": payload, "mime_type": "audio/webm"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"transcript": "Update me on Iran and Israel."}
+
+
+def test_web_incomplete_fragment_prompts_repeat_instead_of_ai_chat() -> None:
+    with patch("voice_assistant.web.generate_response") as mocked_ai:
+        response = process_user_query("Cameras and...")
+    mocked_ai.assert_not_called()
+    assert "only caught part of that" in response.response.lower()
 
 
 def test_web_transcribe_endpoint_rejects_invalid_base64() -> None:
