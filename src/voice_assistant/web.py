@@ -29,7 +29,7 @@ from voice_assistant.datetime_cmd import (
 from voice_assistant.dictionary import get_definition
 from voice_assistant.jokes import get_joke
 from voice_assistant.logging_config import get_logger, setup_logging
-from voice_assistant.news import get_top_headlines
+from voice_assistant.news import get_cached_article_context, get_top_headlines
 from voice_assistant.system_info import get_battery_status, get_platform_summary
 from voice_assistant.weather import get_weather
 from voice_assistant.wiki import get_summary
@@ -1051,6 +1051,18 @@ def _build_selected_headline_deep_dive(
     if not clean_title:
         return fallback
 
+    article_context = get_cached_article_context(clean_title, source)
+    if article_context:
+        detail_answer = _build_article_detail_answer(
+            query,
+            None,
+            article_context,
+            allow_ai=True,
+            fallback=fallback,
+        )
+        if detail_answer:
+            return detail_answer
+
     prompt = (
         "You are answering a user who asked for more detail on one specific headline.\n"
         "Use ONLY the headline text below. Do not invent facts or extra background.\n"
@@ -1548,6 +1560,151 @@ def _rewrite_news_with_ai(
     return answer if _is_ai_news_answer_usable(answer) else ""
 
 
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentence-like chunks."""
+    clean = re.sub(r"\s+", " ", (text or "")).strip()
+    if not clean:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", clean)
+    sentences: list[str] = []
+    for part in parts:
+        snippet = part.strip()
+        if snippet:
+            sentences.append(snippet)
+    return sentences
+
+
+def _ensure_sentence(text: str) -> str:
+    """Ensure text ends with sentence punctuation."""
+    clean = re.sub(r"\s+", " ", (text or "")).strip()
+    if not clean:
+        return ""
+    if clean[-1] not in ".!?":
+        clean += "."
+    return clean
+
+
+def _wants_news_story_detail(query: str) -> bool:
+    """Return True when the user wants richer detail on one story."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    phrases = [
+        "more on",
+        "more about",
+        "tell me more",
+        "give me more details",
+        "give me more detail",
+        "what happened",
+        "break it down",
+        "walk me through",
+        "details on",
+        "detail on",
+    ]
+    if any(phrase in normalized for phrase in phrases):
+        return True
+    return _contains_any_word(
+        normalized,
+        ["detail", "details", "explain", "story", "context", "background"],
+    )
+
+
+def _build_article_detail_fallback(article_context: dict, fallback: str) -> str:
+    """Build a deterministic answer from cached article text."""
+    if not article_context:
+        return fallback
+
+    source_label = (article_context.get("source_label") or article_context.get("source") or "").strip()
+    summary = _ensure_sentence(str(article_context.get("summary", "")).strip())
+    excerpt_sentences = _split_sentences(str(article_context.get("excerpt", "")).strip())
+
+    parts: list[str] = []
+    if summary:
+        if source_label:
+            parts.append(
+                _ensure_sentence(f"According to {source_label}, {summary.rstrip('.!?')}")
+            )
+        else:
+            parts.append(summary)
+    elif source_label:
+        parts.append(_ensure_sentence(f"According to {source_label}, this report gives more detail on the story"))
+
+    for sentence in excerpt_sentences[:2]:
+        clean = _ensure_sentence(sentence)
+        if clean and clean not in parts:
+            parts.append(clean)
+
+    combined = " ".join(parts).strip()
+    return combined or fallback
+
+
+def _rewrite_article_detail_with_ai(
+    query: str,
+    topic: Optional[str],
+    article_context: dict,
+    draft_answer: str,
+) -> str:
+    """Rewrite article-grounded facts into a conversational detail answer."""
+    if not article_context or not draft_answer:
+        return ""
+
+    prompt = (
+        f"User request: {query}\n"
+        f"Topic: {_format_topic_label(topic) if topic else 'general news'}\n"
+        f"Headline: {article_context.get('title', '')}\n"
+        f"Source: {article_context.get('source_label', '')}\n"
+        f"Source summary: {article_context.get('summary', '')}\n"
+        f"Article excerpt: {article_context.get('excerpt', '')}\n"
+        f"Grounded draft answer: {draft_answer}\n"
+        "Rewrite this into natural spoken English. "
+        "Use only the facts supplied above. "
+        "Do not add new facts, causes, names, dates, or speculation. "
+        "Return 2-4 complete sentences with ending punctuation."
+    )
+    answer = generate_response(
+        prompt,
+        conversation_history=None,
+        system_prompt=(
+            "You are Miehab, preparing a spoken article-detail update. "
+            "Use only the supplied source summary and excerpt. "
+            "Do not add outside facts or speculation. "
+            "If the source text is limited, say that clearly."
+        ),
+        max_prompt_length=2200,
+        max_response_tokens=max(Config.AI_MAX_LENGTH, 260),
+        temperature=0.2,
+        use_fallback_models=False,
+    ).strip()
+    return answer if _is_ai_news_answer_usable(answer) else ""
+
+
+def _build_article_detail_answer(
+    query: str,
+    topic: Optional[str],
+    article_context: dict,
+    *,
+    allow_ai: bool,
+    fallback: str,
+) -> str:
+    """Return an article-grounded detail answer, with deterministic fallback."""
+    if not article_context:
+        return fallback
+
+    usable_text = (
+        str(article_context.get("summary", "")).strip()
+        or str(article_context.get("excerpt", "")).strip()
+    )
+    if not usable_text:
+        return fallback
+
+    answer = _build_article_detail_fallback(article_context, fallback)
+    if allow_ai:
+        ai_answer = _rewrite_article_detail_with_ai(query, topic, article_context, answer)
+        if ai_answer:
+            answer = ai_answer
+    return answer
+
+
 def _build_news_confidence_line(headline_items: list[tuple[str, str]]) -> str:
     """Build a confidence+uncertainty line from headline/source coverage."""
     if not headline_items:
@@ -2024,7 +2181,23 @@ def _answer_news_followup(
 
     ordered_headline_items = _prioritize_headline_items_for_query(query, headline_items)
     answer = _build_grounded_news_followup(query, topic, ordered_headline_items)
-    if allow_ai and not _is_precise_news_followup(query):
+    used_article_detail = False
+
+    if _wants_news_story_detail(query) and ordered_headline_items:
+        lead_title, lead_source = ordered_headline_items[0]
+        article_context = get_cached_article_context(lead_title, lead_source)
+        article_answer = _build_article_detail_answer(
+            query,
+            topic,
+            article_context,
+            allow_ai=allow_ai and not _is_precise_news_followup(query),
+            fallback=answer,
+        )
+        if article_answer and article_answer != answer:
+            answer = article_answer
+            used_article_detail = True
+
+    if allow_ai and not _is_precise_news_followup(query) and not used_article_detail:
         ai_answer = _rewrite_news_with_ai(
             query, topic, ordered_headline_items, answer, followup=True
         )

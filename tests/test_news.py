@@ -3,12 +3,22 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from voice_assistant import news
 from voice_assistant.news import (
     _get_conflict_headlines,
     _get_headlines_fallback,
     _rank_articles_for_topic,
+    get_cached_article_context,
     get_top_headlines,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_news_cache() -> None:
+    news._RECENT_HEADLINE_ITEMS = []
+    news._ARTICLE_DETAIL_CACHE = {}
 
 
 class TestGetTopHeadlines:
@@ -265,6 +275,90 @@ class TestGetTopHeadlines:
         assert "Iran and Israel conflict story" in result
         mock_conflict.assert_called_once_with(topic="iran israel war", count=5)
         assert mock_get.call_count == 1
+
+    @patch("voice_assistant.news._get_nasa_headlines", return_value="")
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_cached_article_context_uses_api_summary_and_content(
+        self, mock_get, mock_config, mock_nasa
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        topic_response = MagicMock()
+        topic_response.status_code = 200
+        topic_response.json.return_value = {
+            "articles": [
+                {
+                    "title": "Artemis II mission enters final checks",
+                    "description": "NASA says the crewed moon mission is moving into final integrated checks.",
+                    "content": "Engineers completed spacecraft integration and the crew continues training ahead of flight.",
+                    "url": "",
+                    "source": {"name": "NASA"},
+                    "publishedAt": "2026-04-04T12:00:00Z",
+                }
+            ]
+        }
+        mock_get.return_value = topic_response
+
+        get_top_headlines(topic="artemis ii")
+        context = get_cached_article_context(
+            "Artemis II mission enters final checks", "NASA"
+        )
+
+        assert "crewed moon mission" in context["summary"].lower()
+        assert "spacecraft integration" in context["excerpt"].lower()
+        assert context["source"] == "NASA"
+        assert context["date_label"] == "2026-04-04"
+
+    @patch("voice_assistant.news._get_nasa_headlines", return_value="")
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_cached_article_context_fetches_article_excerpt_from_url(
+        self, mock_get, mock_config, mock_nasa
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        topic_response = MagicMock()
+        topic_response.status_code = 200
+        topic_response.json.return_value = {
+            "articles": [
+                {
+                    "title": "Artemis II mission enters final checks",
+                    "description": "NASA says the crewed moon mission is moving into final integrated checks.",
+                    "content": "",
+                    "url": "https://example.com/artemis-ii",
+                    "source": {"name": "NASA"},
+                    "publishedAt": "2026-04-04T12:00:00Z",
+                }
+            ]
+        }
+        article_response = MagicMock()
+        article_response.status_code = 200
+        article_response.url = "https://example.com/artemis-ii"
+        article_response.text = """
+            <html>
+              <head>
+                <meta property="og:description" content="NASA says Artemis II is moving through final launch preparations." />
+              </head>
+              <body>
+                <article>
+                  <p>Engineers completed a fresh round of integrated vehicle checks before the mission enters its final launch campaign.</p>
+                  <p>The crew is continuing simulations and procedures training while teams review readiness data.</p>
+                </article>
+              </body>
+            </html>
+        """
+        article_response.raise_for_status.return_value = None
+        topic_response.raise_for_status.return_value = None
+        mock_get.side_effect = [topic_response, article_response]
+
+        get_top_headlines(topic="artemis ii")
+        context = get_cached_article_context(
+            "Artemis II mission enters final checks", "NASA"
+        )
+
+        assert "final launch preparations" in context["summary"].lower()
+        assert "integrated vehicle checks" in context["excerpt"].lower()
+        assert "continuing simulations" in context["excerpt"].lower()
+        assert mock_get.call_count == 2
 
 
 @patch("voice_assistant.news._fetch_rss_entries")

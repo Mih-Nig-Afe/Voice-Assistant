@@ -320,6 +320,37 @@ def test_web_news_headline_reference_reuses_selected_headline_for_more_on_it() -
     assert "internet service" in response.response.lower()
 
 
+def test_web_selected_headline_deep_dive_uses_cached_article_context() -> None:
+    web._last_news_headline_response = (
+        "Here are the latest curated conflict headlines on iran israel us:\n"
+        "1. Iranians are leaving the country just to get internet (NPR, 2026-04-03)\n"
+        "2. Iran war live: US-Israel attacks hit petrochemical, nuclear sites in Iran (Al Jazeera, 2026-04-04)"
+    )
+    with (
+        patch(
+            "voice_assistant.web.get_cached_article_context",
+            return_value={
+                "title": "Iranians are leaving the country just to get internet",
+                "source": "NPR",
+                "source_label": "NPR, 2026-04-03",
+                "summary": "People are crossing borders to reconnect after severe internet restrictions.",
+                "excerpt": "The report says families are traveling temporarily so they can contact relatives and access blocked services.",
+            },
+        ) as mocked_context,
+        patch(
+            "voice_assistant.web.generate_response",
+            return_value=(
+                "According to NPR, people are temporarily leaving the country because internet restrictions are severe. "
+                "The report says they are trying to reconnect with relatives and access blocked services."
+            ),
+        ) as mocked_generate,
+    ):
+        response = process_user_query("More on the first line.")
+    mocked_context.assert_called_once()
+    mocked_generate.assert_called_once()
+    assert "reconnect with relatives" in response.response.lower()
+
+
 def test_web_news_headline_reference_handles_first_hit_on_the_news_phrase() -> None:
     web._last_news_headline_response = (
         "Here are the latest curated conflict headlines on iran israel us:\n"
@@ -559,6 +590,44 @@ def test_web_news_followup_uses_ai_rewrite_when_enabled() -> None:
         )
     mocked_ai.assert_called_once()
     assert "fighting is still active" in response.lower()
+
+
+def test_web_news_followup_detail_prefers_cached_article_context() -> None:
+    headline_payload = (
+        "Here are the latest official NASA updates on artemis ii:\n"
+        "1. Artemis II mission enters final checks (NASA, 2026-04-04)\n"
+        "2. Crew continues integrated simulations (NASA, 2026-04-03)"
+    )
+    with (
+        patch(
+            "voice_assistant.web.get_cached_article_context",
+            return_value={
+                "title": "Artemis II mission enters final checks",
+                "source": "NASA",
+                "source_label": "NASA, 2026-04-04",
+                "summary": "NASA says Artemis II is moving through final integrated launch checks.",
+                "excerpt": "Engineers completed another round of vehicle testing and the crew is still running mission simulations ahead of launch.",
+            },
+        ) as mocked_context,
+        patch(
+            "voice_assistant.web.generate_response",
+            return_value=(
+                "NASA says Artemis II is now in its final integrated checks. "
+                "Engineers have been testing the vehicle again while the crew keeps running mission simulations ahead of launch."
+            ),
+        ) as mocked_ai,
+    ):
+        response = web._answer_news_followup(
+            "Can you give me more details on Artemis II?",
+            "artemis ii",
+            headline_payload,
+            allow_ai=True,
+        )
+    mocked_context.assert_called_once_with(
+        "Artemis II mission enters final checks", "NASA, 2026-04-04"
+    )
+    mocked_ai.assert_called_once()
+    assert "final integrated checks" in response.lower()
 
 
 def test_web_news_followup_timing_uses_dates_from_source_metadata() -> None:

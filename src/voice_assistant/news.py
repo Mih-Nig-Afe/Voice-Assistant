@@ -104,6 +104,120 @@ _CONFLICT_NEWS_RSS_SOURCES = [
 _MIDDLE_EAST_CONFLICT_RSS_SOURCES = [
     ("BBC News", "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml"),
 ]
+_RECENT_HEADLINE_ITEMS: list[dict] = []
+_ARTICLE_DETAIL_CACHE: dict[str, dict] = {}
+_ARTICLE_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    )
+}
+_ARTICLE_BOILERPLATE_PHRASES = {
+    "all rights reserved",
+    "sign up for",
+    "newsletter",
+    "advertisement",
+    "cookie policy",
+    "privacy policy",
+    "terms of use",
+    "watch live",
+    "read more",
+}
+
+
+def _safe_timeout(default: float = 5.0, cap: Optional[float] = None) -> float:
+    """Return a safe numeric timeout from config."""
+    try:
+        timeout = float(getattr(Config, "HTTP_TIMEOUT", default) or default)
+    except Exception:
+        timeout = default
+    if cap is not None:
+        timeout = min(timeout, cap)
+    return max(timeout, 1.0)
+
+
+def _headline_match_key(title: str) -> str:
+    """Normalize a headline title for cache matching."""
+    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
+def _source_base(source: str) -> str:
+    """Normalize a source label by stripping appended date metadata."""
+    return (source or "").split(",", 1)[0].strip().lower()
+
+
+def _normalize_snippet(text: str, *, max_chars: int = 700) -> str:
+    """Normalize text snippets from APIs or scraped pages."""
+    clean = html.unescape(text or "")
+    clean = re.sub(r"\[\+\d+\s+chars\]", "", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return ""
+    if len(clean) <= max_chars:
+        return clean
+    return clean[: max_chars - 3].rstrip() + "..."
+
+
+def _dedupe_snippets(snippets: list[str]) -> list[str]:
+    """Deduplicate text snippets while preserving order."""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for snippet in snippets:
+        clean = _normalize_snippet(snippet)
+        if not clean:
+            continue
+        key = re.sub(r"[^a-z0-9]+", " ", clean.lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(clean)
+    return deduped
+
+
+def _cache_recent_headline_items(items: list[dict]) -> None:
+    """Replace the in-memory recent headline cache."""
+    global _RECENT_HEADLINE_ITEMS
+    cached: list[dict] = []
+    for item in items:
+        title = _normalize_snippet(str(item.get("title", "")), max_chars=240)
+        if not title:
+            continue
+        cached.append(
+            {
+                "title": title,
+                "source": _normalize_snippet(str(item.get("source", "")), max_chars=80),
+                "date_label": _normalize_snippet(
+                    str(item.get("date_label", "")), max_chars=32
+                ),
+                "summary": _normalize_snippet(
+                    str(item.get("summary", "")), max_chars=320
+                ),
+                "content": _normalize_snippet(
+                    str(item.get("content", "")), max_chars=800
+                ),
+                "url": str(item.get("url", "")).strip(),
+            }
+        )
+    _RECENT_HEADLINE_ITEMS = cached
+
+
+def _find_recent_headline_item(title: str, source: str = "") -> Optional[dict]:
+    """Find the most recent cached headline matching title/source."""
+    title_key = _headline_match_key(title)
+    if not title_key:
+        return None
+
+    source_key = _source_base(source)
+    fallback_match = None
+    for item in _RECENT_HEADLINE_ITEMS:
+        if _headline_match_key(str(item.get("title", ""))) != title_key:
+            continue
+        item_source = _source_base(str(item.get("source", "")))
+        if source_key and item_source == source_key:
+            return item
+        if fallback_match is None:
+            fallback_match = item
+    return fallback_match
 
 
 def _topic_keywords(topic: str) -> list[str]:
@@ -332,6 +446,14 @@ def _normalize_feed_title(title: str, source_name: str) -> str:
     return clean
 
 
+def _extract_feed_link(child: ET.Element) -> str:
+    """Extract an RSS/Atom link value from a feed child element."""
+    href = str(child.attrib.get("href", "")).strip()
+    if href:
+        return href
+    return _element_text(child)
+
+
 def _parse_rss_entries(xml_text: str, source_name: str) -> list[dict]:
     """Parse RSS/Atom XML into normalized feed entries."""
     try:
@@ -345,12 +467,15 @@ def _parse_rss_entries(xml_text: str, source_name: str) -> list[dict]:
             continue
 
         title = ""
+        link = ""
         published_raw = ""
         summary = ""
         for child in list(element):
             child_name = _xml_local_name(child.tag)
             if child_name == "title" and not title:
                 title = _element_text(child)
+            elif child_name == "link" and not link:
+                link = _extract_feed_link(child)
             elif child_name in {"pubdate", "published", "updated", "date"} and not published_raw:
                 published_raw = _element_text(child)
             elif child_name in {"description", "summary", "content"} and not summary:
@@ -369,6 +494,7 @@ def _parse_rss_entries(xml_text: str, source_name: str) -> list[dict]:
                 "published_at": published_at,
                 "published_sort": published_at.timestamp() if published_at else 0.0,
                 "date_label": published_at.strftime("%Y-%m-%d") if published_at else "",
+                "url": link,
             }
         )
     return entries
@@ -396,6 +522,135 @@ def _fetch_rss_entries(source_name: str, url: str) -> list[dict]:
 def _dedupe_feed_title_key(title: str) -> str:
     """Build a stable dedupe key for cross-source headline titles."""
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
+def _extract_meta_description(html_text: str) -> str:
+    """Extract a useful meta description from article HTML."""
+    patterns = [
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\'](.*?)["\']',
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
+        r'<meta[^>]+name=["\']twitter:description["\'][^>]+content=["\'](.*?)["\']',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return _normalize_snippet(match.group(1), max_chars=320)
+    return ""
+
+
+def _strip_html_tags(fragment: str) -> str:
+    """Remove tags from a small HTML fragment."""
+    clean = re.sub(r"<[^>]+>", " ", fragment or "")
+    return _normalize_snippet(clean, max_chars=900)
+
+
+def _extract_article_paragraphs(html_text: str) -> list[str]:
+    """Extract usable article paragraphs from HTML."""
+    working = re.sub(
+        r"<(?:script|style|noscript)[^>]*>.*?</(?:script|style|noscript)>",
+        " ",
+        html_text or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    article_match = re.search(
+        r"<article\b[^>]*>(.*?)</article>", working, flags=re.IGNORECASE | re.DOTALL
+    )
+    if article_match:
+        working = article_match.group(1)
+
+    paragraphs = re.findall(
+        r"<p\b[^>]*>(.*?)</p>", working, flags=re.IGNORECASE | re.DOTALL
+    )
+    extracted: list[str] = []
+    for paragraph in paragraphs:
+        clean = _strip_html_tags(paragraph)
+        if len(clean) < 60:
+            continue
+        lowered = clean.lower()
+        if any(phrase in lowered for phrase in _ARTICLE_BOILERPLATE_PHRASES):
+            continue
+        extracted.append(clean)
+    return _dedupe_snippets(extracted)[:4]
+
+
+def _fetch_article_detail(url: str) -> dict:
+    """Fetch article HTML and extract lightweight detail text."""
+    target = (url or "").strip()
+    if not target:
+        return {}
+    if target in _ARTICLE_DETAIL_CACHE:
+        return dict(_ARTICLE_DETAIL_CACHE[target])
+
+    try:
+        start = time.perf_counter()
+        response = requests.get(
+            target,
+            headers=_ARTICLE_FETCH_HEADERS,
+            timeout=_safe_timeout(cap=5.0),
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "Article fetch completed in %.1fms (status=%s, url=%s)",
+            elapsed_ms,
+            response.status_code,
+            target,
+        )
+        response.raise_for_status()
+        html_text = response.text or ""
+        paragraphs = _extract_article_paragraphs(html_text)
+        detail = {
+            "url": getattr(response, "url", target) or target,
+            "meta_description": _extract_meta_description(html_text),
+            "excerpt": " ".join(paragraphs[:3]).strip(),
+        }
+        _ARTICLE_DETAIL_CACHE[target] = detail
+        return dict(detail)
+    except Exception as exc:
+        logger.warning("Article fetch failed for %s: %s", target, exc)
+        _ARTICLE_DETAIL_CACHE[target] = {}
+        return {}
+
+
+def get_cached_article_context(title: str, source: str = "") -> dict:
+    """Return cached article context for a displayed headline title."""
+    item = _find_recent_headline_item(title, source)
+    if not item:
+        return {}
+
+    article_detail = _fetch_article_detail(str(item.get("url", "")))
+    source_name = str(item.get("source", "")).strip()
+    date_label = str(item.get("date_label", "")).strip()
+    source_label = source_name
+    if source_name and date_label:
+        source_label = f"{source_name}, {date_label}"
+    elif date_label:
+        source_label = date_label
+
+    summary_candidates = _dedupe_snippets(
+        [
+            str(item.get("summary", "")),
+            str(article_detail.get("meta_description", "")),
+            str(item.get("content", "")),
+        ]
+    )
+    detail_candidates = _dedupe_snippets(
+        [
+            str(item.get("content", "")),
+            str(article_detail.get("excerpt", "")),
+            str(item.get("summary", "")),
+            str(article_detail.get("meta_description", "")),
+        ]
+    )
+
+    return {
+        "title": str(item.get("title", "")).strip(),
+        "source": source_name,
+        "source_label": source_label,
+        "date_label": date_label,
+        "url": str(article_detail.get("url", "") or item.get("url", "")).strip(),
+        "summary": summary_candidates[0] if summary_candidates else "",
+        "excerpt": " ".join(detail_candidates[:3]).strip(),
+    }
 
 
 def _get_conflict_headlines(topic: str, count: int = 5) -> str:
@@ -473,6 +728,8 @@ def _get_conflict_headlines(topic: str, count: int = 5) -> str:
     if not selected:
         return ""
 
+    _cache_recent_headline_items(selected[:count])
+
     pretty_topic = _format_topic_label(topic)
     header = (
         f"Here are the latest curated conflict headlines on {pretty_topic}:"
@@ -505,43 +762,32 @@ def _get_nasa_headlines(topic: str, count: int = 5) -> str:
         )
         response.raise_for_status()
 
-        xml = response.text or ""
-        items = re.findall(r"<item>(.*?)</item>", xml, flags=re.IGNORECASE | re.DOTALL)
-        if not items:
+        entries = _parse_rss_entries(response.text or "", "NASA")
+        if not entries:
             return ""
 
         keywords = _topic_keywords(topic)
-        selected: list[tuple[str, str]] = []
-        for raw_item in items:
-            title_match = re.search(
-                r"<title>\s*(?:<!\[CDATA\[(.*?)\]\]>|(.*?))\s*</title>",
-                raw_item,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            if not title_match:
-                continue
-            title = (title_match.group(1) or title_match.group(2) or "").strip()
-            if not title:
-                continue
-
+        selected: list[dict] = []
+        for entry in entries:
+            title = str(entry.get("title", "")).strip()
             if keywords:
                 matched = _matched_topic_keywords(title, keywords)
                 if not _is_topic_match_sufficient(matched, keywords):
                     continue
 
-            date_match = re.search(
-                r"<pubDate>\s*(.*?)\s*</pubDate>", raw_item, flags=re.IGNORECASE | re.DOTALL
-            )
-            date_label = _format_pub_date(date_match.group(1) if date_match else "")
-            selected.append((title, date_label))
+            selected.append(entry)
             if len(selected) >= count:
                 break
 
         if not selected:
             return ""
 
+        _cache_recent_headline_items(selected[:count])
+
         lines = []
-        for idx, (title, date_label) in enumerate(selected[:count], 1):
+        for idx, item in enumerate(selected[:count], 1):
+            title = str(item.get("title", "")).strip()
+            date_label = str(item.get("date_label", "")).strip()
             source = f"NASA, {date_label}" if date_label else "NASA"
             lines.append(f"{idx}. {title} ({source})")
 
@@ -626,11 +872,28 @@ def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
                 return get_top_headlines(topic=None, count=count)
             articles = ranked_articles
 
+        selected_items: list[dict] = []
         lines = []
         for i, article in enumerate(articles[:count], 1):
-            title = article.get("title", "No title")
-            source = article.get("source", {}).get("name", "Unknown")
+            title = str(article.get("title", "No title")).strip()
+            source = str(article.get("source", {}).get("name", "Unknown")).strip()
+            published_raw = str(article.get("publishedAt", "")).strip()
+            published_at = _parse_feed_datetime(published_raw)
+            selected_items.append(
+                {
+                    "title": title,
+                    "source": source,
+                    "date_label": (
+                        published_at.strftime("%Y-%m-%d") if published_at else ""
+                    ),
+                    "summary": str(article.get("description", "")).strip(),
+                    "content": str(article.get("content", "")).strip(),
+                    "url": str(article.get("url", "")).strip(),
+                }
+            )
             lines.append(f"{i}. {title} ({source})")
+
+        _cache_recent_headline_items(selected_items)
 
         pretty_topic = _format_topic_label(topic)
         header = (
@@ -673,22 +936,19 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
         )
         response.raise_for_status()
 
-        # Simple XML parsing without extra dependency
-        import re
-
-        titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>", response.text)
-        if not titles:
-            titles = re.findall(r"<title>(.*?)</title>", response.text)
-
-        # Skip the feed title (first item)
-        headlines = titles[1 : count + 1] if len(titles) > 1 else titles[:count]
+        entries = _parse_rss_entries(response.text or "", "Google News")
+        headlines = entries[:]
 
         if topic and headlines:
             keywords = _topic_keywords(topic)
             if keywords:
                 scored = []
-                for headline in headlines:
-                    matched = _matched_topic_keywords(headline, keywords)
+                for entry in headlines:
+                    headline = str(entry.get("title", "")).strip()
+                    summary = str(entry.get("summary", "")).strip()
+                    matched = _matched_topic_keywords(
+                        f"{headline} {summary}", keywords
+                    )
                     if not _is_topic_match_sufficient(matched, keywords):
                         continue
                     specificity_bonus = len(
@@ -699,25 +959,28 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
                             and keyword not in _GENERIC_CONFLICT_KEYWORDS
                         }
                     )
-                    score = _score_news_text_relevance(headline, keywords) + (
-                        specificity_bonus * 2
-                    )
-                    scored.append((score, headline))
-                ranked = [
-                    headline
-                    for score, headline in sorted(
+                    score = _score_news_text_relevance(
+                        f"{headline} {summary}", keywords
+                    ) + (specificity_bonus * 2)
+                    scored.append((score, entry))
+                ranked_entries = [
+                    entry
+                    for score, entry in sorted(
                         scored, key=lambda item: item[0], reverse=True
                     )
                     if score > 0
                 ]
-                if ranked:
-                    headlines = ranked[:count]
+                if ranked_entries:
+                    headlines = ranked_entries[:count]
                 else:
                     logger.info(
                         "No relevant RSS topic headlines for '%s'; retrying with general headlines.",
                         topic,
                     )
                     return _get_headlines_fallback(topic=None, count=count)
+
+        if headlines:
+            headlines = headlines[:count]
 
         if not headlines and topic:
             logger.info(
@@ -728,7 +991,9 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
         if not headlines:
             return "No news headlines available right now."
 
-        lines = [f"{i}. {h}" for i, h in enumerate(headlines, 1)]
+        _cache_recent_headline_items(headlines)
+
+        lines = [f"{i}. {item.get('title', '')}" for i, item in enumerate(headlines, 1)]
         pretty_topic = _format_topic_label(topic)
         header = (
             f"Here are the latest headlines on {pretty_topic}:"
