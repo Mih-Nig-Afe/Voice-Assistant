@@ -4,6 +4,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.23] - 2026-04-04
+
+### Fixed
+
+- Fixed cached article-detail prioritization so fetched page metadata is preferred when available, aligning summary output with the richer source context path.
+- Removed duplicate news trigger registration in CLI command routing.
+- Removed an unused import in the assistant entrypoint.
+
+### Changed
+
+- Aligned package metadata versions in pyproject.toml and src/voice_assistant/__init__.py.
+- Updated .env.example model comment text to match the current default model.
+
+### Removed
+
+- Removed historical planning docs IMPLEMENTATION_ROADMAP.md and IMPROVEMENT_PLAN.md from the active repository surface.
+
+### Tested
+
+- Full suite passing: `183 passed`.
+
 ## [1.2.22] - 2026-04-04
 
 ### Fixed

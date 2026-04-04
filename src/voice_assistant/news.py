@@ -289,7 +289,8 @@ def _is_topic_match_sufficient(matched_keywords: set[str], keywords: list[str]) 
     specific_keywords = {
         keyword
         for keyword in keywords
-        if keyword not in _WEAK_TOPIC_KEYWORDS and keyword not in _GENERIC_CONFLICT_KEYWORDS
+        if keyword not in _WEAK_TOPIC_KEYWORDS
+        and keyword not in _GENERIC_CONFLICT_KEYWORDS
     }
     if specific_keywords and not matched_keywords.intersection(specific_keywords):
         return False
@@ -325,7 +326,11 @@ def _rank_articles_for_topic(articles: list[dict], topic: str) -> list[dict]:
         total = (title_score * 3) + body_score + (specificity_bonus * 2)
         scored.append((total, article))
 
-    ranked = [article for score, article in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
+    ranked = [
+        article
+        for score, article in sorted(scored, key=lambda item: item[0], reverse=True)
+        if score > 0
+    ]
     return ranked
 
 
@@ -376,7 +381,9 @@ def _is_conflict_topic(topic: Optional[str]) -> bool:
         return False
     if keywords.intersection(_CONFLICT_TOPIC_HINTS):
         return True
-    return bool(keywords.intersection(_GENERIC_CONFLICT_KEYWORDS) and len(keywords) >= 2)
+    return bool(
+        keywords.intersection(_GENERIC_CONFLICT_KEYWORDS) and len(keywords) >= 2
+    )
 
 
 def _conflict_feed_sources(topic: str) -> list[tuple[str, str]]:
@@ -409,7 +416,9 @@ def _xml_local_name(tag: str) -> str:
 
 def _element_text(element: ET.Element) -> str:
     """Return normalized text content for an XML element."""
-    text = " ".join(part.strip() for part in element.itertext() if part and part.strip())
+    text = " ".join(
+        part.strip() for part in element.itertext() if part and part.strip()
+    )
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
@@ -476,7 +485,10 @@ def _parse_rss_entries(xml_text: str, source_name: str) -> list[dict]:
                 title = _element_text(child)
             elif child_name == "link" and not link:
                 link = _extract_feed_link(child)
-            elif child_name in {"pubdate", "published", "updated", "date"} and not published_raw:
+            elif (
+                child_name in {"pubdate", "published", "updated", "date"}
+                and not published_raw
+            ):
                 published_raw = _element_text(child)
             elif child_name in {"description", "summary", "content"} and not summary:
                 summary = _element_text(child)
@@ -626,10 +638,12 @@ def get_cached_article_context(title: str, source: str = "") -> dict:
     elif date_label:
         source_label = date_label
 
+    # Prefer scraped article metadata when available because it is often
+    # fresher/more specific than API summary snippets.
     summary_candidates = _dedupe_snippets(
         [
-            str(item.get("summary", "")),
             str(article_detail.get("meta_description", "")),
+            str(item.get("summary", "")),
             str(item.get("content", "")),
         ]
     )
@@ -670,7 +684,10 @@ def _get_conflict_headlines(topic: str, count: int = 5) -> str:
     candidates: list[dict] = []
     with ThreadPoolExecutor(max_workers=min(4, len(feed_sources))) as executor:
         future_map = {
-            executor.submit(_fetch_rss_entries, source_name, url): (source_index, source_name)
+            executor.submit(_fetch_rss_entries, source_name, url): (
+                source_index,
+                source_name,
+            )
             for source_index, (source_name, url) in enumerate(feed_sources)
         }
         for future in as_completed(future_map):
@@ -689,7 +706,9 @@ def _get_conflict_headlines(topic: str, count: int = 5) -> str:
                         and keyword not in _GENERIC_CONFLICT_KEYWORDS
                     }
                 )
-                score = _score_news_text_relevance(text, keywords) + (specificity_bonus * 2)
+                score = _score_news_text_relevance(text, keywords) + (
+                    specificity_bonus * 2
+                )
                 if score <= 0:
                     continue
                 candidates.append(
@@ -946,9 +965,7 @@ def _get_headlines_fallback(topic: Optional[str] = None, count: int = 5) -> str:
                 for entry in headlines:
                     headline = str(entry.get("title", "")).strip()
                     summary = str(entry.get("summary", "")).strip()
-                    matched = _matched_topic_keywords(
-                        f"{headline} {summary}", keywords
-                    )
+                    matched = _matched_topic_keywords(f"{headline} {summary}", keywords)
                     if not _is_topic_match_sufficient(matched, keywords):
                         continue
                     specificity_bonus = len(

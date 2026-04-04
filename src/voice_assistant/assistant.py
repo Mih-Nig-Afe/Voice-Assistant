@@ -9,7 +9,6 @@ Includes graceful shutdown via signal handlers and conversation memory.
 """
 
 import signal
-import sys
 from contextlib import suppress
 
 from voice_assistant import commands
@@ -36,7 +35,6 @@ from voice_assistant.speech import (
 from voice_assistant.system_info import (
     get_battery_status,
     get_platform_summary,
-    get_system_info,
 )
 from voice_assistant.tts import initialize_tts, shutdown_tts, speak
 from voice_assistant.weather import get_weather
@@ -95,7 +93,7 @@ def _cmd_wikipedia(user_input: str) -> str:
 
 
 @commands.register(
-    ["latest news", "what's happening", "headlines", "news", "headlines"],
+    ["latest news", "what's happening", "headlines", "news"],
     "Get latest news headlines",
 )
 def _cmd_news(user_input: str) -> str:
