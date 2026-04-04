@@ -4,6 +4,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.22] - 2026-04-04
+
+### Fixed
+
+- Added robust date/time intent detection in web mode so phrasing like `what is the date today` routes to real local datetime responses instead of Wikipedia fallback.
+- Reworked news update and news follow-up responses to deterministic headline-grounded output (no free-form model hallucination over live-news answers).
+- Expanded news follow-up detection (including `when`/`launch`/`mission` language) so mission-update follow-up questions stay in live-news context.
+- Added Groq chat retry logic for reasoning-only/empty `finish_reason=length` responses to keep primary model usage more stable before falling back.
+
+### Changed
+
+- Updated default fallback chain to `llama-3.3-70b-versatile,qwen/qwen3-32b` (removed `openai/gpt-oss-20b` default fallback due repeated empty outputs in runtime traces).
+- Updated Docker Compose mounts to include `.env` in-container so runtime AI config refresh can read live model changes from your `.env` file.
+
+### Tested
+
+- Added/updated regression tests for deterministic news summary/follow-up output, date-intent routing, and reasoning-only primary-model retry behavior.
+- Added tests covering NASA-topic routing through NASA's official RSS source and fallback behavior.
+- Full suite passing: `157 passed`.
+
 ## [1.2.21] - 2026-04-04
 
 ### Fixed

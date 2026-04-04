@@ -96,6 +96,31 @@ def _clean_generated_text(text: str) -> str:
     return clean
 
 
+def _extract_chat_text(response: object) -> tuple[str, str, str]:
+    """
+    Extract chat text and metadata from a Groq completion response.
+
+    Returns:
+        (clean_text, finish_reason, reasoning_text)
+    """
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return "", "", ""
+
+    choice = choices[0]
+    message = getattr(choice, "message", None)
+    raw_content = getattr(message, "content", "") if message is not None else ""
+    content_text = raw_content if isinstance(raw_content, str) else str(raw_content or "")
+    text = _clean_generated_text(content_text)
+
+    finish_reason = str(getattr(choice, "finish_reason", "") or "").strip().lower()
+    raw_reasoning = getattr(message, "reasoning", "") if message is not None else ""
+    reasoning_text = (
+        raw_reasoning.strip() if isinstance(raw_reasoning, str) else str(raw_reasoning or "").strip()
+    )
+    return text, finish_reason, reasoning_text
+
+
 def _is_tool_mismatch_error(exc: Exception) -> bool:
     """Return True if model tried unsupported tool-calling behavior."""
     message = str(exc).lower()
@@ -274,8 +299,25 @@ def _generate_groq(
                     max_tokens=Config.AI_MAX_LENGTH,
                     temperature=0.4,
                 )
-                content = response.choices[0].message.content if response.choices else ""
-                text = _clean_generated_text(content or "")
+                text, finish_reason, reasoning_text = _extract_chat_text(response)
+                if (
+                    not text
+                    and finish_reason == "length"
+                    and reasoning_text
+                ):
+                    retry_max_tokens = max(Config.AI_MAX_LENGTH * 2, 320)
+                    logger.info(
+                        "Groq model '%s' returned reasoning-only output; retrying with max_tokens=%d.",
+                        model_name,
+                        retry_max_tokens,
+                    )
+                    retry_response = _groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        max_tokens=retry_max_tokens,
+                        temperature=0.2,
+                    )
+                    text, _, _ = _extract_chat_text(retry_response)
                 if text:
                     _record_model_success(model_name)
                     _LAST_MODEL_USED = model_name

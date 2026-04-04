@@ -7,6 +7,7 @@ and NewsAPI.org as fallback.
 
 import time
 from typing import Optional
+from email.utils import parsedate_to_datetime
 
 import requests
 import re
@@ -55,6 +56,8 @@ _GENERIC_CONFLICT_KEYWORDS = {
     "ceasefire",
 }
 _WEAK_TOPIC_KEYWORDS = {"us"}
+_NASA_BREAKING_NEWS_RSS = "https://www.nasa.gov/rss/dyn/breaking_news.rss"
+_NASA_TOPIC_HINTS = {"nasa", "artemis", "orion", "sls", "moon", "lunar", "apollo"}
 
 
 def _topic_keywords(topic: str) -> list[str]:
@@ -186,6 +189,95 @@ def _format_topic_label(topic: Optional[str]) -> str:
     return " ".join(mapped)
 
 
+def _format_pub_date(pub_date: str) -> str:
+    """Format RSS pubDate into a short, readable date."""
+    raw = (pub_date or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = parsedate_to_datetime(raw)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return raw[:16]
+
+
+def _is_nasa_space_topic(topic: Optional[str]) -> bool:
+    """Return True when a topic is likely about NASA/space missions."""
+    normalized = (topic or "").strip().lower()
+    if not normalized:
+        return False
+    return any(hint in normalized for hint in _NASA_TOPIC_HINTS)
+
+
+def _get_nasa_headlines(topic: str, count: int = 5) -> str:
+    """
+    Fetch NASA updates from NASA's free official RSS feed.
+
+    Returns empty string when feed has no relevant entries, so caller can fallback.
+    """
+    try:
+        start = time.perf_counter()
+        response = requests.get(_NASA_BREAKING_NEWS_RSS, timeout=Config.HTTP_TIMEOUT)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "NASA RSS request completed in %.1fms (status=%s)",
+            elapsed_ms,
+            response.status_code,
+        )
+        response.raise_for_status()
+
+        xml = response.text or ""
+        items = re.findall(r"<item>(.*?)</item>", xml, flags=re.IGNORECASE | re.DOTALL)
+        if not items:
+            return ""
+
+        keywords = _topic_keywords(topic)
+        selected: list[tuple[str, str]] = []
+        for raw_item in items:
+            title_match = re.search(
+                r"<title>\s*(?:<!\[CDATA\[(.*?)\]\]>|(.*?))\s*</title>",
+                raw_item,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if not title_match:
+                continue
+            title = (title_match.group(1) or title_match.group(2) or "").strip()
+            if not title:
+                continue
+
+            if keywords:
+                matched = _matched_topic_keywords(title, keywords)
+                if not _is_topic_match_sufficient(matched, keywords):
+                    continue
+
+            date_match = re.search(
+                r"<pubDate>\s*(.*?)\s*</pubDate>", raw_item, flags=re.IGNORECASE | re.DOTALL
+            )
+            date_label = _format_pub_date(date_match.group(1) if date_match else "")
+            selected.append((title, date_label))
+            if len(selected) >= count:
+                break
+
+        if not selected:
+            return ""
+
+        lines = []
+        for idx, (title, date_label) in enumerate(selected[:count], 1):
+            source = f"NASA, {date_label}" if date_label else "NASA"
+            lines.append(f"{idx}. {title} ({source})")
+
+        pretty_topic = _format_topic_label(topic)
+        header = (
+            f"Here are the latest official NASA updates on {pretty_topic}:"
+            if pretty_topic
+            else "Here are the latest official NASA updates:"
+        )
+        return header + "\n" + "\n".join(lines)
+    except Exception as exc:
+        logger.error("NASA RSS fetch failed: %s", exc)
+        return ""
+
+
 def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
     """
     Fetch top news headlines, optionally filtered by topic.
@@ -201,6 +293,12 @@ def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
     """
     api_key = Config.GNEWS_API_KEY
     topic = sanitize_query(topic or "", max_length=80) or None
+
+    if topic and _is_nasa_space_topic(topic):
+        nasa_updates = _get_nasa_headlines(topic=topic, count=count)
+        if nasa_updates:
+            return nasa_updates
+
     if not api_key:
         return _get_headlines_fallback(topic, count)
 

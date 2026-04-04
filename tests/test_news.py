@@ -151,6 +151,70 @@ class TestGetTopHeadlines:
         result = get_top_headlines()
         assert "taking too long" in result.lower() or "try again" in result.lower()
 
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_nasa_topic_prefers_official_nasa_rss(self, mock_get, mock_config):
+        mock_config.GNEWS_API_KEY = "test_key"
+        nasa_rss = MagicMock()
+        nasa_rss.status_code = 200
+        nasa_rss.text = (
+            "<rss><channel>"
+            "<item>"
+            "<title><![CDATA[NASA confirms Artemis II integrated testing milestone]]></title>"
+            "<pubDate>Fri, 04 Apr 2026 12:00:00 +0000</pubDate>"
+            "</item>"
+            "</channel></rss>"
+        )
+        nasa_rss.raise_for_status.return_value = None
+        mock_get.return_value = nasa_rss
+
+        result = get_top_headlines(topic="nasa artemis ii")
+
+        assert "official nasa updates" in result.lower()
+        assert "Artemis II integrated testing milestone" in result
+        assert "NASA" in result
+        call_url = mock_get.call_args.args[0]
+        assert "nasa.gov/rss/dyn/breaking_news.rss" in call_url
+
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    def test_nasa_topic_falls_back_when_nasa_feed_has_no_relevant_items(
+        self, mock_get, mock_config
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        nasa_rss = MagicMock()
+        nasa_rss.status_code = 200
+        nasa_rss.text = (
+            "<rss><channel>"
+            "<item>"
+            "<title><![CDATA[Earth science briefing update]]></title>"
+            "<pubDate>Fri, 04 Apr 2026 12:00:00 +0000</pubDate>"
+            "</item>"
+            "</channel></rss>"
+        )
+        nasa_rss.raise_for_status.return_value = None
+
+        gnews_topic = MagicMock()
+        gnews_topic.status_code = 200
+        gnews_topic.json.return_value = {
+            "articles": [
+                {"title": "General space coverage", "source": {"name": "Reuters"}},
+            ]
+        }
+        gnews_general = MagicMock()
+        gnews_general.status_code = 200
+        gnews_general.json.return_value = {
+            "articles": [
+                {"title": "General space coverage", "source": {"name": "Reuters"}},
+            ]
+        }
+        mock_get.side_effect = [nasa_rss, gnews_topic, gnews_general]
+
+        result = get_top_headlines(topic="nasa artemis ii")
+
+        assert "General space coverage" in result
+        assert mock_get.call_count == 3
+
 
 def test_rank_articles_for_entity_topic_filters_us_only_noise() -> None:
     articles = [

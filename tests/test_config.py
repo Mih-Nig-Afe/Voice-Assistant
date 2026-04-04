@@ -62,7 +62,7 @@ class TestConfig:
             {
                 "AI_BACKEND": "groq",
                 "AI_MODEL": "openai/gpt-oss-120b",
-                "AI_MODEL_FALLBACKS": "openai/gpt-oss-20b,llama-3.3-70b-versatile",
+                "AI_MODEL_FALLBACKS": "llama-3.3-70b-versatile,qwen/qwen3-32b",
                 "AI_MAX_LENGTH": "222",
                 "AI_MAX_HISTORY": "19",
                 "REQUIRE_GROQ_API_KEY": "true",
@@ -72,7 +72,7 @@ class TestConfig:
             Config.reload_ai_settings()
 
         assert Config.AI_MODEL == "openai/gpt-oss-120b"
-        assert Config.AI_MODEL_FALLBACKS.startswith("openai/gpt-oss-20b")
+        assert Config.AI_MODEL_FALLBACKS.startswith("llama-3.3-70b-versatile")
         assert Config.AI_MAX_LENGTH == 222
         assert Config.AI_MAX_HISTORY == 19
         assert Config.REQUIRE_GROQ_API_KEY is True

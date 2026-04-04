@@ -45,8 +45,9 @@ services:
     #   - PULSE_SERVER=unix:/run/user/1000/pulse/native
 
     volumes:
+      # Mount .env so runtime config refresh can pick AI model changes without rebuild
+      - ./.env:/home/miehab/app/.env:ro
       # Mount sounds directory for custom audio files
       - ./sounds:/home/miehab/app/sounds:ro
       # Mount config for easy customization
       - ./config:/home/miehab/app/config:ro
-

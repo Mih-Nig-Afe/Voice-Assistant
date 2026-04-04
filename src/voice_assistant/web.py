@@ -37,7 +37,7 @@ logger = get_logger("web")
 
 _FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
 
-app = FastAPI(title="Miehab Web Assistant", version="1.2.19")
+app = FastAPI(title="Miehab Web Assistant", version="1.2.22")
 app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 _pending_weather_city: bool = False
@@ -232,6 +232,19 @@ _NEWS_ENTITY_HINTS = {
     "hamas",
     "russia",
     "ukraine",
+}
+_NEWS_FOLLOWUP_HINTS = {
+    "when",
+    "where",
+    "launch",
+    "launching",
+    "mission",
+    "flight",
+    "schedule",
+    "timeline",
+    "status",
+    "progress",
+    "doing",
 }
 _GENERAL_NEWS_TOPIC = "general"
 
@@ -479,6 +492,78 @@ def _contains_any_word(text: str, words: list[str]) -> bool:
     )
 
 
+def _is_time_question(query: str) -> bool:
+    """Detect broad natural-language current-time questions."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if any(
+        blocked in normalized
+        for blocked in [
+            "time machine",
+            "time travel",
+            "response time",
+            "delivery time",
+            "launch time",
+        ]
+    ):
+        return False
+    if _contains_any_phrase(
+        normalized,
+        [
+            "what time is it",
+            "what's the time",
+            "what is the time",
+            "current time",
+            "time now",
+            "tell me the time",
+        ],
+    ):
+        return True
+    return bool(re.search(r"\btime\b.*\b(now|today)\b", normalized))
+
+
+def _is_date_question(query: str) -> bool:
+    """Detect broad natural-language current-date/day questions."""
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return False
+    if any(
+        blocked in normalized
+        for blocked in [
+            "launch date",
+            "release date",
+            "due date",
+            "start date",
+            "end date",
+            "expiration date",
+        ]
+    ):
+        return False
+    if _contains_any_phrase(
+        normalized,
+        [
+            "what is the date today",
+            "what's the date today",
+            "what date is it",
+            "what date today",
+            "today's date",
+            "today date",
+            "current date",
+            "what day is it",
+            "what day is today",
+            "what is today",
+        ],
+    ):
+        return True
+    if re.search(r"\bdate\b.*\b(today|now)\b", normalized):
+        return True
+    return bool(
+        re.search(r"\btoday\b.*\b(date|day)\b", normalized)
+        or re.search(r"\bwhat\b.*\bday\b", normalized)
+    )
+
+
 def _extract_weather_city(text: str) -> str:
     """Extract likely city name from natural weather phrasing."""
     query = text.lower().strip()
@@ -577,6 +662,26 @@ def _normalize_news_topic_candidate(text: str) -> str:
     if not topic_tokens:
         return ""
     return " ".join(topic_tokens[:6]).strip()
+
+
+def _format_topic_label(topic: Optional[str]) -> str:
+    """Format topic text for human-friendly speech responses."""
+    clean = (topic or "").strip()
+    if not clean:
+        return ""
+    tokens = clean.split()
+    mapped: list[str] = []
+    for token in tokens:
+        lower = token.lower()
+        if lower in {"us", "usa"}:
+            mapped.append("US")
+        elif lower == "uk":
+            mapped.append("UK")
+        elif lower == "eu":
+            mapped.append("EU")
+        else:
+            mapped.append(token)
+    return " ".join(mapped)
 
 
 def _extract_news_topic(text: str) -> str:
@@ -849,7 +954,7 @@ def _is_news_followup_question(query: str) -> bool:
     if not normalized:
         return False
     if not (
-        _contains_any_word(normalized, ["who", "what", "which", "how"])
+        _contains_any_word(normalized, ["who", "what", "which", "how", "when", "where"])
         or "?" in normalized
     ):
         return False
@@ -861,6 +966,11 @@ def _is_news_followup_question(query: str) -> bool:
     if _last_news_headline_response and _contains_any_word(
         normalized,
         list(_NEWS_CONFLICT_HINTS) + ["attacker", "side", "sides", "now", "currently"],
+    ):
+        return True
+
+    if _last_news_headline_response and _contains_any_word(
+        normalized, list(_NEWS_FOLLOWUP_HINTS)
     ):
         return True
 
@@ -1181,12 +1291,18 @@ def _extract_headline_items(news_response: str) -> list[tuple[str, str]]:
     """Parse numbered headline lines into (title, source) tuples."""
     items: list[tuple[str, str]] = []
     for line in (news_response or "").splitlines():
-        match = re.match(r"^\s*\d+\.\s*(.+?)\s*\(([^()]+)\)\s*$", line.strip())
-        if not match:
+        stripped = line.strip()
+        with_source = re.match(r"^\s*\d+\.\s*(.+?)\s*\(([^()]+)\)\s*$", stripped)
+        if with_source:
+            title = with_source.group(1).strip()
+            source = with_source.group(2).strip()
+            items.append((title, source))
             continue
-        title = match.group(1).strip()
-        source = match.group(2).strip()
-        items.append((title, source))
+        basic = re.match(r"^\s*\d+\.\s*(.+?)\s*$", stripped)
+        if basic:
+            title = basic.group(1).strip()
+            if title:
+                items.append((title, ""))
     return items
 
 
@@ -1222,6 +1338,128 @@ def _build_news_sources_line(headline_items: list[tuple[str, str]]) -> str:
     return f"Sources used: {'; '.join(sources[:5])}."
 
 
+def _headline_preview(title: str, max_len: int = 140) -> str:
+    """Create a compact headline preview snippet."""
+    clean = re.sub(r"\s+", " ", (title or "")).strip()
+    if len(clean) <= max_len:
+        return clean
+    return clean[: max_len - 3].rstrip() + "..."
+
+
+def _extract_date_hints_from_headlines(headline_items: list[tuple[str, str]]) -> list[str]:
+    """Extract date/timing hints directly from headline text."""
+    hints: list[str] = []
+    patterns = [
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:,\s*\d{4})?\b",
+        r"\b20\d{2}\b",
+        r"\b(?:spring|summer|fall|autumn|winter)\s+20\d{2}\b",
+        r"\b(?:this|next)\s+(?:week|month|year)\b",
+        r"\blate\s+20\d{2}\b",
+        r"\bearly\s+20\d{2}\b",
+        r"\bq[1-4]\s+20\d{2}\b",
+    ]
+    for title, _ in headline_items[:5]:
+        for pattern in patterns:
+            for match in re.findall(pattern, title, flags=re.IGNORECASE):
+                value = str(match).strip()
+                if value and value.lower() not in {h.lower() for h in hints}:
+                    hints.append(value)
+    return hints[:3]
+
+
+def _extract_named_entities_from_headlines(headline_items: list[tuple[str, str]]) -> list[str]:
+    """Extract common entity hints from fetched headline titles."""
+    combined = " ".join(title for title, _ in headline_items[:5]).lower()
+    if not combined:
+        return []
+
+    entities: list[str] = []
+    known_entities = [
+        "iran",
+        "israel",
+        "us",
+        "usa",
+        "russia",
+        "ukraine",
+        "hamas",
+        "nasa",
+        "artemis ii",
+        "artemis",
+        "china",
+        "european union",
+        "united states",
+    ]
+    for entity in known_entities:
+        if re.search(rf"\b{re.escape(entity)}\b", combined) and entity not in entities:
+            entities.append(entity)
+    return entities[:5]
+
+
+def _build_grounded_news_update(topic: Optional[str], headline_items: list[tuple[str, str]]) -> str:
+    """Create a deterministic update summary grounded only in headline text."""
+    if not headline_items:
+        return "I could not parse current headlines clearly. Please ask for headlines again."
+
+    pretty_topic = _format_topic_label(topic)
+    lead = (
+        f"Latest update on {pretty_topic} from current headlines:"
+        if pretty_topic
+        else "Latest update from current headlines:"
+    )
+    points: list[str] = []
+    for title, source in headline_items[:3]:
+        if source:
+            points.append(f"{_headline_preview(title)} ({source})")
+        else:
+            points.append(_headline_preview(title))
+    return lead + " " + "; ".join(points) + "."
+
+
+def _build_grounded_news_followup(
+    query: str, topic: Optional[str], headline_items: list[tuple[str, str]]
+) -> str:
+    """Answer news follow-up questions without hallucinating beyond fetched headlines."""
+    normalized = (query or "").strip().lower()
+    if not headline_items:
+        return "I do not have a fresh headline set for that yet. Ask for the latest headlines first."
+
+    if _contains_any_word(
+        normalized,
+        ["when", "date", "time", "launch", "launching", "flight", "schedule", "timeline"],
+    ):
+        date_hints = _extract_date_hints_from_headlines(headline_items)
+        if date_hints:
+            return (
+                "From the latest fetched headlines, the timing mentioned is: "
+                + ", ".join(date_hints)
+                + "."
+            )
+        top_title = _headline_preview(headline_items[0][0])
+        return (
+            "From the latest fetched headlines, I do not see a confirmed date yet. "
+            f"The top related report says: {top_title}."
+        )
+
+    if _contains_any_word(
+        normalized, ["who", "which", "attacking", "attack", "attacker", "side", "sides"]
+    ):
+        entities = _extract_named_entities_from_headlines(headline_items)
+        if len(entities) >= 2:
+            return (
+                "From these headlines, multiple parties are mentioned ("
+                + ", ".join(entities)
+                + "), so one clear side is not confirmed yet."
+            )
+        if entities:
+            return (
+                f"From these headlines, the main named party is {entities[0]}, "
+                "but details are still developing."
+            )
+        return "From these headlines, the attacking side is not clearly identified yet."
+
+    return _build_grounded_news_update(topic, headline_items)
+
+
 def _summarize_news_update(query: str, topic: Optional[str], news_response: str) -> str:
     """Generate a concise, human update grounded in fetched headlines."""
     if not news_response:
@@ -1242,21 +1480,7 @@ def _summarize_news_update(query: str, topic: Optional[str], news_response: str)
     if not headline_items:
         return news_response
 
-    headline_block = "\n".join(
-        f"- {title} ({source})" for title, source in headline_items[:5]
-    )
-    prompt = (
-        "You are summarizing live news headlines for a user.\n"
-        "Use ONLY the headlines below. Do not invent facts.\n"
-        "Give a natural 2-3 sentence update in plain language.\n"
-        "If details are unclear or mixed, say so briefly.\n"
-        f"User request: {query}\n"
-        f"Topic: {topic or 'general'}\n"
-        f"Headlines:\n{headline_block}"
-    )
-    summary = generate_response(prompt, conversation_history=None).strip()
-    if not summary:
-        return news_response
+    summary = _build_grounded_news_update(topic, headline_items)
 
     if not _wants_news_meta_details(query):
         return summary
@@ -1289,23 +1513,7 @@ def _answer_news_followup(query: str, topic: Optional[str], news_response: str) 
     if not headline_items:
         return news_response
 
-    headline_block = "\n".join(
-        f"- {title} ({source})" for title, source in headline_items[:5]
-    )
-    prompt = (
-        "You are answering a follow-up question about a live conflict update.\n"
-        "Use ONLY the headlines provided. Do not invent facts.\n"
-        "Answer directly in 1-3 sentences using plain, literal language.\n"
-        "Do not use figurative wording or unusual expressions.\n"
-        "If the headlines do not clearly identify a side, explicitly say it is unclear.\n"
-        "If multiple sides are reported attacking, say that clearly.\n"
-        f"User question: {query}\n"
-        f"Topic context: {topic or 'general'}\n"
-        f"Headlines:\n{headline_block}"
-    )
-    answer = generate_response(prompt, conversation_history=None).strip()
-    if not answer:
-        return news_response
+    answer = _build_grounded_news_followup(query, topic, headline_items)
 
     if not _wants_news_meta_details(query):
         return answer
@@ -1394,6 +1602,18 @@ def process_user_query(user_input: str) -> ChatResponse:
             _pending_weather_city = False
             _last_weather_city = city
             response = _respond_with_weather(query, city)
+        memory.add_assistant_message(response)
+        return ChatResponse(response=response)
+
+    is_time_query = _is_time_question(query)
+    is_date_query = _is_date_question(query)
+    if is_time_query or is_date_query:
+        if is_time_query and is_date_query:
+            response = get_full_datetime()
+        elif is_time_query:
+            response = get_current_time()
+        else:
+            response = get_current_date()
         memory.add_assistant_message(response)
         return ChatResponse(response=response)
 

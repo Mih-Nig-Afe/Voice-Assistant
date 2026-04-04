@@ -365,16 +365,13 @@ def test_web_news_summary_omits_confidence_and_sources_lines_by_default() -> Non
         "2. Story two (Source B)\n"
         "3. Story three (Source C)"
     )
-    with patch(
-        "voice_assistant.web.generate_response",
-        return_value="Situation is tense with ongoing military and political signals.",
-    ):
-        response = web._summarize_news_update(
-            "Update me on Iran and Israel.",
-            "iran israel",
-            headline_payload,
-        )
-    assert "Situation is tense" in response
+    response = web._summarize_news_update(
+        "Update me on Iran and Israel.",
+        "iran israel",
+        headline_payload,
+    )
+    assert "Latest update on iran israel" in response
+    assert "Story one" in response
     assert "Confidence:" not in response
     assert "Sources used:" not in response
 
@@ -386,16 +383,12 @@ def test_web_news_summary_includes_meta_lines_when_explicitly_requested() -> Non
         "2. Story two (Source B)\n"
         "3. Story three (Source C)"
     )
-    with patch(
-        "voice_assistant.web.generate_response",
-        return_value="Situation is tense with ongoing military and political signals.",
-    ):
-        response = web._summarize_news_update(
-            "Update me on Iran and Israel with confidence and sources.",
-            "iran israel",
-            headline_payload,
-        )
-    assert "Situation is tense" in response
+    response = web._summarize_news_update(
+        "Update me on Iran and Israel with confidence and sources.",
+        "iran israel",
+        headline_payload,
+    )
+    assert "Latest update on iran israel" in response
     assert "Confidence:" in response
     assert "Sources used:" in response
     assert "Source A" in response
@@ -504,16 +497,12 @@ def test_web_news_followup_answer_omits_meta_lines_by_default() -> None:
         "2. Diplomatic statement follows overnight attacks (Source B)\n"
         "3. Regional military alert raised (Source C)"
     )
-    with patch(
-        "voice_assistant.web.generate_response",
-        return_value="Current reports suggest both sides have launched strikes.",
-    ):
-        response = web._answer_news_followup(
-            "Who is attacking now? Iran, Israel, or US?",
-            "iran us israel",
-            payload,
-        )
-    assert "Current reports suggest both sides" in response
+    response = web._answer_news_followup(
+        "Who is attacking now? Iran, Israel, or US?",
+        "iran us israel",
+        payload,
+    )
+    assert "not clearly identified" in response.lower()
     assert "Confidence:" not in response
     assert "Sources used:" not in response
 
@@ -525,18 +514,28 @@ def test_web_news_followup_answer_includes_meta_lines_when_requested() -> None:
         "2. Diplomatic statement follows overnight attacks (Source B)\n"
         "3. Regional military alert raised (Source C)"
     )
-    with patch(
-        "voice_assistant.web.generate_response",
-        return_value="Current reports suggest both sides have launched strikes.",
-    ):
-        response = web._answer_news_followup(
-            "Who is attacking now? Iran, Israel, or US? Include confidence and sources.",
-            "iran us israel",
-            payload,
-        )
-    assert "Current reports suggest both sides" in response
+    response = web._answer_news_followup(
+        "Who is attacking now? Iran, Israel, or US? Include confidence and sources.",
+        "iran us israel",
+        payload,
+    )
+    assert "not clearly identified" in response.lower()
     assert "Confidence:" in response
     assert "Sources used:" in response
+
+
+def test_web_date_today_question_prefers_datetime_over_wikipedia() -> None:
+    with (
+        patch(
+            "voice_assistant.web.get_current_date",
+            return_value="Today is Saturday, April 04, 2026.",
+        ) as mocked_date,
+        patch("voice_assistant.web.get_summary") as mocked_wiki,
+    ):
+        response = process_user_query("So what is the date today?")
+    mocked_date.assert_called_once()
+    mocked_wiki.assert_not_called()
+    assert response.response == "Today is Saturday, April 04, 2026."
 
 
 def test_web_redirects_0_0_0_0_origin_to_127_loopback() -> None:

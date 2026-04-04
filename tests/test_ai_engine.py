@@ -120,6 +120,33 @@ class TestAIEngine:
         assert "fallback response" in result.lower()
         assert mock_client.chat.completions.create.call_count == 2
 
+    @patch("voice_assistant.ai_engine._backend", "groq")
+    @patch("voice_assistant.ai_engine._initialized", True)
+    @patch("voice_assistant.ai_engine._groq_client")
+    def test_groq_retries_primary_on_reasoning_only_length_response(self, mock_client):
+        first_choice = MagicMock()
+        first_choice.finish_reason = "length"
+        first_choice.message = MagicMock(content="", reasoning="need more tokens")
+        first_response = MagicMock()
+        first_response.choices = [first_choice]
+
+        retry_choice = MagicMock()
+        retry_choice.finish_reason = "stop"
+        retry_choice.message = MagicMock(content="Primary answer after retry", reasoning="")
+        retry_response = MagicMock()
+        retry_response.choices = [retry_choice]
+
+        mock_client.chat.completions.create.side_effect = [first_response, retry_response]
+
+        result = generate_response("hello")
+        assert "primary answer after retry" in result.lower()
+        assert mock_client.chat.completions.create.call_count == 2
+        first_call = mock_client.chat.completions.create.call_args_list[0]
+        second_call = mock_client.chat.completions.create.call_args_list[1]
+        assert first_call.kwargs["model"] == Config.AI_MODEL
+        assert second_call.kwargs["model"] == Config.AI_MODEL
+        assert second_call.kwargs["max_tokens"] >= 320
+
     @patch("voice_assistant.ai_engine.Config.reload_ai_settings")
     def test_runtime_refresh_reloads_backend_when_ai_signature_changes(self, mock_reload):
         original = (

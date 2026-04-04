@@ -150,12 +150,14 @@ The project now includes a modern browser frontend to operate Miehab visually wi
 - In fallback mode, tap mic once to start recording and tap again (or wait ~7 seconds) to submit speech for transcription.
 - News intent parsing now ignores filler phrasing (for example `tell me your news`) and falls back to general headlines when topic-specific results are empty.
 - News/update phrasing (for example `give me an update on Iran and Israel`) now routes to live headlines instead of generic model guesses.
+- NASA/Artemis mission topics now prefer NASA's official free RSS feed before general news sources.
 - Headline-number follow-ups (for example `more about headline 5`) now stay focused on that selected headline/topic.
 - Weather follow-up mode now rejects conversational noise as a city (for example `i'm kinda feeling too`) and asks for the city again.
 - Weather responses are now conversational and intent-aware: comfort questions (for example `is that hot?`) get interpreted guidance, while detail requests return explicit numbers.
-- News update requests are summarized into a short human-style situation update (grounded in fetched headlines) instead of always reading a full list.
-- News summary/follow-up answers now default to natural human-style output; confidence/source lines are included only when you explicitly ask for them.
+- News update/follow-up responses are now deterministic and strictly grounded in fetched headlines to reduce hallucinations on live topics.
+- News follow-ups about timing (for example `when is Artemis II launching`) now return only timing hints present in fetched headlines, or explicitly say no confirmed date is present.
 - News follow-up questions (for example `who is attacking now?`) now stay in the news context and answer from recent headlines instead of falling into Wikipedia topic lookup.
+- Date/time questions in flexible phrasing (for example `what is the date today`) now route directly to real local datetime responses instead of Wikipedia fallback.
 - Weather context now remembers recent city mentions in hot/cold conversations, so follow-ups like `how hot is it now?` can reuse the same city.
 
 ### Docker Input Troubleshooting
@@ -283,7 +285,7 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
 | `AI_BACKEND` | `groq` | AI backend (`groq` or `huggingface`) |
 | `AI_MODEL` | `openai/gpt-oss-120b` | Primary model name for the AI backend |
-| `AI_MODEL_FALLBACKS` | `openai/gpt-oss-20b,llama-3.3-70b-versatile,qwen/qwen3-32b` | Comma-separated fallback model order if primary fails |
+| `AI_MODEL_FALLBACKS` | `llama-3.3-70b-versatile,qwen/qwen3-32b` | Comma-separated fallback model order if primary fails |
 | `STT_MODEL` | `whisper-large-v3` | Speech-to-text model for web fallback (`whisper-large-v3` or `whisper-large-v3-turbo`) |
 | `STT_LANGUAGE` | `en` | Language hint for fallback speech transcription |
 | `STT_PROMPT` | *(preset city-bias prompt)* | Optional prompt to improve recognition of names and places |
@@ -297,6 +299,7 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `LISTEN_TIMEOUT` | `8` | Speech recognition timeout (seconds) |
 
 AI runtime note: `AI_BACKEND`, `AI_MODEL`, `AI_MODEL_FALLBACKS`, `AI_MAX_LENGTH`, and `AI_MAX_HISTORY` are reloaded from `.env` at request time, so model changes in `.env` are applied by the running assistant.
+Docker note: `docker-compose.yml` mounts `.env` into the container, so AI model edits in `.env` are picked up on the next request. If you run plain `docker run --env-file`, restart the container after editing `.env`.
 
 See `.env.example` for the full list of configurable options.
 
@@ -348,6 +351,7 @@ These APIs are used by Miehab and require **no signup or API key**:
 | **JokeAPI** | [v2.jokeapi.dev](https://v2.jokeapi.dev) | Random jokes (120 req/min) |
 | **Free Dictionary** | [dictionaryapi.dev](https://dictionaryapi.dev) | Word definitions (unlimited) |
 | **Google News RSS** | news.google.com/rss | News fallback (unlimited) |
+| **NASA RSS** | nasa.gov/rss | Official NASA mission/news updates (no key) |
 
 ---
 
