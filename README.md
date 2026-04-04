@@ -205,7 +205,7 @@ Quick rules:
 | "Battery status" | Battery level |
 | "Help" | List all commands |
 | "Clear history" | Reset conversation memory |
-| "How are you today?" | AI conversation (Groq/Kimi with fallbacks) |
+| "How are you today?" | AI conversation (Groq GPT OSS with fallbacks) |
 | "Bye" / "Goodbye" | Exit the assistant |
 
 ---
@@ -282,8 +282,8 @@ Configuration is managed through environment variables (`.env` file) with sensib
 | `OPENWEATHER_API_KEY` | *(optional)* | OpenWeather API key for weather |
 | `GNEWS_API_KEY` | *(optional)* | GNews API key for news (falls back to RSS) |
 | `AI_BACKEND` | `groq` | AI backend (`groq` or `huggingface`) |
-| `AI_MODEL` | `moonshotai/kimi-k2-instruct` | Primary model name for the AI backend |
-| `AI_MODEL_FALLBACKS` | `moonshotai/kimi-k2-instruct-0905,llama-3.3-70b-versatile,qwen/qwen3-32b` | Comma-separated fallback model order if primary fails |
+| `AI_MODEL` | `openai/gpt-oss-120b` | Primary model name for the AI backend |
+| `AI_MODEL_FALLBACKS` | `openai/gpt-oss-20b,llama-3.3-70b-versatile,qwen/qwen3-32b` | Comma-separated fallback model order if primary fails |
 | `STT_MODEL` | `whisper-large-v3` | Speech-to-text model for web fallback (`whisper-large-v3` or `whisper-large-v3-turbo`) |
 | `STT_LANGUAGE` | `en` | Language hint for fallback speech transcription |
 | `STT_PROMPT` | *(preset city-bias prompt)* | Optional prompt to improve recognition of names and places |
@@ -305,7 +305,7 @@ See `.env.example` for the full list of configurable options.
 ### 1. Groq API (AI Conversations) - **Recommended, Required for Best Experience**
 
 - **URL:** [https://console.groq.com](https://console.groq.com)
-- **What it does:** Powers intelligent AI conversations using modern Groq-hosted large models (default: Kimi K2 Instruct)
+- **What it does:** Powers intelligent AI conversations using modern Groq-hosted large models (default: GPT OSS 120B)
 - **How to get a key:**
   1. Go to [console.groq.com](https://console.groq.com) and sign up (Google/GitHub login)
   2. Click "API Keys" in the left sidebar
@@ -367,7 +367,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Acknowledgements
 
-- AI powered by [Groq](https://groq.com/) (Kimi/Qwen/Llama model chain) with [HuggingFace](https://huggingface.co/) fallback
+- AI powered by [Groq](https://groq.com/) (GPT OSS/Qwen/Llama model chain) with [HuggingFace](https://huggingface.co/) fallback
 - Speech via [SpeechRecognition](https://pypi.org/project/SpeechRecognition/) and [pyttsx3](https://pypi.org/project/pyttsx3/)
 - Weather by [OpenWeather](https://openweathermap.org/) · News by [GNews](https://gnews.io/)
 - Jokes by [JokeAPI](https://jokeapi.dev/) · Definitions by [Free Dictionary API](https://dictionaryapi.dev/)

@@ -1,12 +1,12 @@
 """
 AI Response Generation module for Voice Assistant.
 
-Primary backend: Groq API (free tier — Llama 3.3 70B, fast inference).
+Primary backend: Groq API (free tier — GPT OSS 120B default, fast inference).
 Fallback backend: HuggingFace transformers (local GPT-Neo 125M).
 
 Why Groq?
 - Free tier: 30 requests/minute, 14,400 requests/day (no credit card)
-- Runs Llama 3.3 70B — vastly superior to GPT-Neo 125M
+- Runs strong hosted LLMs (GPT OSS/Llama/Qwen) — vastly superior to GPT-Neo 125M
 - Supports multi-turn conversation via chat completions API
 - Sub-second inference (LPU hardware)
 """

@@ -66,10 +66,10 @@ class Config:
 
     # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
     AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
-    AI_MODEL: str = os.getenv("AI_MODEL", "moonshotai/kimi-k2-instruct")
+    AI_MODEL: str = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
     AI_MODEL_FALLBACKS: str = os.getenv(
         "AI_MODEL_FALLBACKS",
-        "moonshotai/kimi-k2-instruct-0905,llama-3.3-70b-versatile,qwen/qwen3-32b",
+        "openai/gpt-oss-20b,llama-3.3-70b-versatile,qwen/qwen3-32b",
     )
     AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
     AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))

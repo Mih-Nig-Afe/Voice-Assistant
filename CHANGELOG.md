@@ -4,6 +4,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.20] - 2026-04-04
+
+### Changed
+
+- Migrated default Groq model from deprecated Kimi K2 variants to `openai/gpt-oss-120b`.
+- Updated default fallback chain to `openai/gpt-oss-20b,llama-3.3-70b-versatile,qwen/qwen3-32b` to keep free-tier-friendly failover behavior.
+
+### Docs
+
+- Updated `.env.example` and README model defaults and naming to reflect GPT OSS migration and remove Kimi-specific guidance.
+
 ## [1.2.19] - 2026-03-18
 
 ### Fixed
