@@ -66,10 +66,10 @@ class Config:
 
     # AI — Groq free API (primary), HuggingFace GPT-Neo (fallback)
     AI_BACKEND: str = os.getenv("AI_BACKEND", "groq")  # groq | huggingface
-    AI_MODEL: str = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
+    AI_MODEL: str = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
     AI_MODEL_FALLBACKS: str = os.getenv(
         "AI_MODEL_FALLBACKS",
-        "llama-3.3-70b-versatile,qwen/qwen3-32b",
+        "openai/gpt-oss-120b,qwen/qwen3-32b",
     )
     AI_MAX_LENGTH: int = int(os.getenv("AI_MAX_LENGTH", "150"))
     AI_MAX_HISTORY: int = int(os.getenv("AI_MAX_HISTORY", "20"))
@@ -225,10 +225,10 @@ class Config:
 
         cls.GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
         cls.AI_BACKEND = os.getenv("AI_BACKEND", "groq")
-        cls.AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
+        cls.AI_MODEL = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
         cls.AI_MODEL_FALLBACKS = os.getenv(
             "AI_MODEL_FALLBACKS",
-            "llama-3.3-70b-versatile,qwen/qwen3-32b",
+            "openai/gpt-oss-120b,qwen/qwen3-32b",
         )
         cls.AI_MAX_LENGTH = int(os.getenv("AI_MAX_LENGTH", "150"))
         cls.AI_MAX_HISTORY = int(os.getenv("AI_MAX_HISTORY", "20"))

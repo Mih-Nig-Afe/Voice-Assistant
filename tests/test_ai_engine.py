@@ -77,6 +77,27 @@ class TestAIEngine:
     @patch("voice_assistant.ai_engine._backend", "groq")
     @patch("voice_assistant.ai_engine._initialized", True)
     @patch("voice_assistant.ai_engine._groq_client")
+    def test_groq_generation_uses_custom_system_prompt(self, mock_client):
+        mock_choice = MagicMock()
+        mock_choice.message.content = "Custom system prompt worked."
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        result = generate_response(
+            "How are you?",
+            system_prompt="Custom grounded prompt",
+            max_prompt_length=900,
+        )
+        assert "custom system prompt worked" in result.lower()
+        call_args = mock_client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        assert messages[0]["content"] == "Custom grounded prompt"
+        assert messages[-1]["content"] == "How are you?"
+
+    @patch("voice_assistant.ai_engine._backend", "groq")
+    @patch("voice_assistant.ai_engine._initialized", True)
+    @patch("voice_assistant.ai_engine._groq_client")
     def test_groq_with_history(self, mock_client):
         """Should pass conversation history to Groq."""
         mock_choice = MagicMock()
@@ -146,6 +167,24 @@ class TestAIEngine:
         assert first_call.kwargs["model"] == Config.AI_MODEL
         assert second_call.kwargs["model"] == Config.AI_MODEL
         assert second_call.kwargs["max_tokens"] >= 320
+
+    @patch("voice_assistant.ai_engine._backend", "groq")
+    @patch("voice_assistant.ai_engine._initialized", True)
+    @patch("voice_assistant.ai_engine._groq_client")
+    def test_groq_retries_plain_empty_primary_before_fallback(self, mock_client):
+        first_response = MagicMock()
+        first_response.choices = [MagicMock(message=MagicMock(content=""))]
+        retry_response = MagicMock()
+        retry_response.choices = [MagicMock(message=MagicMock(content="Primary after retry"))]
+        mock_client.chat.completions.create.side_effect = [first_response, retry_response]
+
+        result = generate_response("hello", use_fallback_models=False)
+        assert "primary after retry" in result.lower()
+        assert mock_client.chat.completions.create.call_count == 2
+        first_call = mock_client.chat.completions.create.call_args_list[0]
+        second_call = mock_client.chat.completions.create.call_args_list[1]
+        assert first_call.kwargs["model"] == Config.AI_MODEL
+        assert second_call.kwargs["model"] == Config.AI_MODEL
 
     @patch("voice_assistant.ai_engine.Config.reload_ai_settings")
     def test_runtime_refresh_reloads_backend_when_ai_signature_changes(self, mock_reload):

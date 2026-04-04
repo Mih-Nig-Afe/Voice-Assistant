@@ -56,6 +56,13 @@ def test_web_weather_phrase_with_today_suffix() -> None:
     assert "Addis weather ok" == response.response
 
 
+def test_web_weather_update_without_city_prompts_for_city_instead_of_using_going() -> None:
+    with patch("voice_assistant.web.get_weather") as mocked:
+        response = process_user_query("Update me on how the weather is going.")
+    mocked.assert_not_called()
+    assert "which city should i check" in response.response.lower()
+
+
 def test_web_city_name_not_misread_as_calculator_intent() -> None:
     web._pending_weather_city = True
     with patch("voice_assistant.web.get_weather", return_value="Addis weather ok"):
@@ -71,6 +78,14 @@ def test_web_weather_follow_up_with_preposition_is_normalized() -> None:
         response = process_user_query("for shashamani")
     mocked.assert_called_once_with("shashamani")
     assert response.response == "Shashamani weather ok"
+
+
+def test_web_weather_follow_up_with_what_about_phrase_is_normalized() -> None:
+    web._pending_weather_city = True
+    with patch("voice_assistant.web.get_weather", return_value="Hawassa weather ok") as mocked:
+        response = process_user_query("What about Hawassa?")
+    mocked.assert_called_once_with("hawassa")
+    assert response.response == "Hawassa weather ok"
 
 
 def test_web_weather_follow_up_with_no_city_tokens_prompts_again() -> None:
@@ -211,6 +226,20 @@ def test_web_news_generic_phrase_uses_general_headlines() -> None:
         response = process_user_query("Tell me your news.")
     mocked.assert_called_once_with(None)
     assert response.response == "Top news"
+
+
+def test_web_ambiguous_update_phrase_does_not_force_news_topic() -> None:
+    with (
+        patch("voice_assistant.web.get_top_headlines") as mocked_news,
+        patch(
+            "voice_assistant.web.generate_response",
+            return_value="Do you mean weather updates or wallet news updates?",
+        ) as mocked_ai,
+    ):
+        response = process_user_query("And just update me on how the wallet is going.")
+    mocked_news.assert_not_called()
+    mocked_ai.assert_called_once()
+    assert "weather updates or wallet news" in response.response.lower()
 
 
 def test_web_news_noise_phrase_extracts_clean_topic_keywords() -> None:
@@ -370,10 +399,54 @@ def test_web_news_summary_omits_confidence_and_sources_lines_by_default() -> Non
         "iran israel",
         headline_payload,
     )
-    assert "Latest update on iran israel" in response
-    assert "Story one" in response
+    assert "latest reporting on iran israel" in response.lower()
+    assert "one report from source a says story one." in response.lower()
     assert "Confidence:" not in response
     assert "Sources used:" not in response
+
+
+def test_web_news_summary_uses_ai_rewrite_when_enabled() -> None:
+    headline_payload = (
+        "Here are the latest headlines on artemis ii:\n"
+        "1. Liftoff nears for Artemis II (NASA)\n"
+        "2. Crew training continues ahead of launch (Reuters)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value=(
+            "NASA's Artemis II update sounds steady so far. "
+            "NASA says liftoff is nearing, and Reuters reports the crew is still moving "
+            "through launch preparation."
+        ),
+    ) as mocked_ai:
+        response = web._summarize_news_update(
+            "Update me on Artemis II.",
+            "artemis ii",
+            headline_payload,
+            allow_ai=True,
+        )
+    mocked_ai.assert_called_once()
+    assert "artemis ii update sounds steady" in response.lower()
+
+
+def test_web_news_summary_falls_back_when_ai_rewrite_is_unavailable() -> None:
+    headline_payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Story one (Source A)\n"
+        "2. Story two (Source B)\n"
+        "3. Story three (Source C)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value="I don't have a response right now. Please try once more.",
+    ):
+        response = web._summarize_news_update(
+            "Update me on Iran and Israel.",
+            "iran israel",
+            headline_payload,
+            allow_ai=True,
+        )
+    assert "latest reporting on iran israel" in response.lower()
 
 
 def test_web_news_summary_includes_meta_lines_when_explicitly_requested() -> None:
@@ -388,11 +461,112 @@ def test_web_news_summary_includes_meta_lines_when_explicitly_requested() -> Non
         "iran israel",
         headline_payload,
     )
-    assert "Latest update on iran israel" in response
+    assert "latest reporting on iran israel" in response.lower()
     assert "Confidence:" in response
     assert "Sources used:" in response
     assert "Source A" in response
     assert "Source B" in response
+
+
+def test_web_news_followup_uses_ai_rewrite_when_enabled() -> None:
+    headline_payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Officials say strikes continued overnight (Source A)\n"
+        "2. Diplomats push for restraint (Source B)"
+    )
+    with patch(
+        "voice_assistant.web.generate_response",
+        return_value=(
+            "From the current reporting, the fighting is still active. "
+            "One headline says strikes continued overnight, while another says diplomats "
+            "are pushing for restraint."
+        ),
+    ) as mocked_ai:
+        response = web._answer_news_followup(
+            "How is the Iran war going now?",
+            "iran israel",
+            headline_payload,
+            allow_ai=True,
+        )
+    mocked_ai.assert_called_once()
+    assert "fighting is still active" in response.lower()
+
+
+def test_web_news_followup_timing_uses_dates_from_source_metadata() -> None:
+    headline_payload = (
+        "Here are the latest headlines on artemis ii:\n"
+        "1. Liftoff! NASA Launches Astronauts on Historic Artemis Moon Mission (NASA, 2026-04-01)\n"
+        "2. NASA's Artemis II Mission Leaves Earth Orbit for Flight around Moon (NASA, 2026-04-03)"
+    )
+    response = web._answer_news_followup(
+        "So when is it launching?",
+        "artemis ii",
+        headline_payload,
+    )
+    assert "april 1, 2026" in response.lower()
+
+
+def test_web_explainer_followup_prefers_explanation_headline_when_available() -> None:
+    headline_payload = (
+        "Here are the latest curated conflict headlines on iran israel war:\n"
+        "1. Iran war live: attacks hit key sites in Iran (Al Jazeera, 2026-04-04)\n"
+        "2. Why did US and Israel attack Iran and how long could the war last? (BBC News, 2026-04-03)\n"
+        "3. Are Iran-allied paramilitaries dragging Iraq into the war? (DW, 2026-04-03)"
+    )
+    response = web._answer_news_followup(
+        "How did the war between Iran and Israel begin?",
+        "iran israel war",
+        headline_payload,
+    )
+    assert "explanation-focused current headline" in response.lower()
+    assert "why did us and israel attack iran" in response.lower()
+
+
+def test_web_current_followup_prefers_live_update_headline_when_available() -> None:
+    headline_payload = (
+        "Here are the latest curated conflict headlines on iran israel war:\n"
+        "1. Why did US and Israel attack Iran and how long could the war last? (BBC News, 2026-04-03)\n"
+        "2. Iran war live: attacks hit key sites in Iran (Al Jazeera, 2026-04-04)\n"
+        "3. Are Iran-allied paramilitaries dragging Iraq into the war? (DW, 2026-04-03)"
+    )
+    response = web._answer_news_followup(
+        "How is it going now?",
+        "iran israel war",
+        headline_payload,
+    )
+    assert "al jazeera" in response.lower()
+    assert "attacks hit key sites in iran" in response.lower()
+
+
+def test_web_precise_news_followup_skips_ai_rewrite() -> None:
+    headline_payload = (
+        "Here are the latest headlines on artemis ii:\n"
+        "1. Liftoff! NASA Launches Astronauts on Historic Artemis Moon Mission (NASA, 2026-04-01)\n"
+        "2. NASA's Artemis II Mission Leaves Earth Orbit for Flight around Moon (NASA, 2026-04-03)"
+    )
+    with patch("voice_assistant.web.generate_response") as mocked_ai:
+        response = web._answer_news_followup(
+            "So when is it launching?",
+            "artemis ii",
+            headline_payload,
+            allow_ai=True,
+        )
+    mocked_ai.assert_not_called()
+    assert "april 1, 2026" in response.lower()
+
+
+def test_web_news_followup_begin_question_admits_headlines_do_not_explain_origin() -> None:
+    headline_payload = (
+        "Here are the latest headlines on iran us israel:\n"
+        "1. Officials say strikes continued overnight (Source A)\n"
+        "2. Diplomats push for restraint (Source B)"
+    )
+    response = web._answer_news_followup(
+        "How did the war between Iran and Israel begin?",
+        "iran israel",
+        headline_payload,
+    )
+    assert "do not explain how it began" in response.lower()
 
 
 def test_web_news_followup_question_uses_recent_headlines_context() -> None:

@@ -1,8 +1,14 @@
 """Tests for news module."""
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from voice_assistant.news import get_top_headlines, _get_headlines_fallback, _rank_articles_for_topic
+from voice_assistant.news import (
+    _get_conflict_headlines,
+    _get_headlines_fallback,
+    _rank_articles_for_topic,
+    get_top_headlines,
+)
 
 
 class TestGetTopHeadlines:
@@ -214,6 +220,110 @@ class TestGetTopHeadlines:
 
         assert "General space coverage" in result
         assert mock_get.call_count == 3
+
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    @patch("voice_assistant.news._get_conflict_headlines")
+    def test_conflict_topic_prefers_curated_rss_before_gnews(
+        self, mock_conflict, mock_get, mock_config
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        mock_conflict.return_value = (
+            "Here are the latest curated conflict headlines on Iran Israel war:\n"
+            "1. Iran and Israel exchange strikes overnight (BBC News, 2026-04-04)"
+        )
+
+        result = get_top_headlines(topic="iran israel war")
+
+        assert "curated conflict headlines" in result.lower()
+        mock_conflict.assert_called_once_with(topic="iran israel war", count=5)
+        mock_get.assert_not_called()
+
+    @patch("voice_assistant.news.Config")
+    @patch("voice_assistant.news.requests.get")
+    @patch("voice_assistant.news._get_conflict_headlines")
+    def test_conflict_topic_falls_back_to_gnews_when_curated_mix_empty(
+        self, mock_conflict, mock_get, mock_config
+    ):
+        mock_config.GNEWS_API_KEY = "test_key"
+        mock_conflict.return_value = ""
+        topic_response = MagicMock()
+        topic_response.status_code = 200
+        topic_response.json.return_value = {
+            "articles": [
+                {
+                    "title": "Iran and Israel conflict story",
+                    "description": "Regional conflict update",
+                    "source": {"name": "Reuters"},
+                },
+            ]
+        }
+        mock_get.return_value = topic_response
+
+        result = get_top_headlines(topic="iran israel war")
+
+        assert "Iran and Israel conflict story" in result
+        mock_conflict.assert_called_once_with(topic="iran israel war", count=5)
+        assert mock_get.call_count == 1
+
+
+@patch("voice_assistant.news._fetch_rss_entries")
+def test_curated_conflict_headlines_dedupe_and_filter_relevant_items(
+    mock_fetch_rss_entries,
+) -> None:
+    def fake_entries(source_name: str, url: str) -> list[dict]:
+        if source_name == "BBC News":
+            return [
+                {
+                    "title": "Iran and Israel exchange strikes overnight",
+                    "summary": "Regional fighting continues",
+                    "source": source_name,
+                    "published_at": datetime(2026, 4, 4, tzinfo=timezone.utc),
+                    "published_sort": datetime(2026, 4, 4, tzinfo=timezone.utc).timestamp(),
+                    "date_label": "2026-04-04",
+                },
+                {
+                    "title": "London marathon route expands",
+                    "summary": "City event update",
+                    "source": source_name,
+                    "published_at": datetime(2026, 4, 4, tzinfo=timezone.utc),
+                    "published_sort": datetime(2026, 4, 4, tzinfo=timezone.utc).timestamp(),
+                    "date_label": "2026-04-04",
+                },
+            ]
+        if source_name == "NPR":
+            return [
+                {
+                    "title": "Iran and Israel exchange strikes overnight",
+                    "summary": "Duplicate cross-source headline",
+                    "source": source_name,
+                    "published_at": datetime(2026, 4, 4, 1, tzinfo=timezone.utc),
+                    "published_sort": datetime(2026, 4, 4, 1, tzinfo=timezone.utc).timestamp(),
+                    "date_label": "2026-04-04",
+                }
+            ]
+        if source_name == "Al Jazeera":
+            return [
+                {
+                    "title": "Ceasefire talks continue after Iran Israel escalation",
+                    "summary": "Diplomatic efforts intensify",
+                    "source": source_name,
+                    "published_at": datetime(2026, 4, 4, 2, tzinfo=timezone.utc),
+                    "published_sort": datetime(2026, 4, 4, 2, tzinfo=timezone.utc).timestamp(),
+                    "date_label": "2026-04-04",
+                }
+            ]
+        return []
+
+    mock_fetch_rss_entries.side_effect = fake_entries
+
+    result = _get_conflict_headlines("iran israel war", count=3)
+
+    assert "curated conflict headlines" in result.lower()
+    assert "Iran and Israel exchange strikes overnight" in result
+    assert result.count("Iran and Israel exchange strikes overnight") == 1
+    assert "Ceasefire talks continue after Iran Israel escalation" in result
+    assert "London marathon route expands" not in result
 
 
 def test_rank_articles_for_entity_topic_filters_us_only_noise() -> None:

@@ -12,17 +12,30 @@ All notable changes to this project are documented in this file.
 - Reworked news update and news follow-up responses to deterministic headline-grounded output (no free-form model hallucination over live-news answers).
 - Expanded news follow-up detection (including `when`/`launch`/`mission` language) so mission-update follow-up questions stay in live-news context.
 - Added Groq chat retry logic for reasoning-only/empty `finish_reason=length` responses to keep primary model usage more stable before falling back.
+- Fixed pending weather-city follow-ups so phrases like `what about Hawassa` resolve to the city instead of the invalid query `about hawassa`.
+- Added source-grounded AI conversational rewrites for news summaries and news follow-ups, with deterministic fallback when the model reply is unavailable or unusable.
+- Fixed news follow-up date extraction so source metadata like `NASA, 2026-04-01` is recognized in timing answers.
+- Added guarded fallback for short/truncated AI news rewrites and clearer handling for `how did it begin` follow-up questions.
+- Restricted conversational news rewrites to the primary model only, so empty primary rewrites fall back to grounded source text instead of jumping to backup models.
+- Added curated conflict-news RSS routing before GNews for conflict-heavy topics so sources like BBC, NPR, Al Jazeera, and DW are preferred over noisier generic matches.
+- Added parallel curated-feed fetch, topic scoring, and cross-source dedupe for conflict headlines.
+- Switched the default Groq primary model to `llama-3.3-70b-versatile` and moved `openai/gpt-oss-120b` into the fallback chain.
+- Added query-aware conflict headline prioritization so explainer questions prefer explainer-style sources and live-update questions prefer current reporting.
 
 ### Changed
 
-- Updated default fallback chain to `llama-3.3-70b-versatile,qwen/qwen3-32b` (removed `openai/gpt-oss-20b` default fallback due repeated empty outputs in runtime traces).
+- Updated default fallback chain to `openai/gpt-oss-120b,qwen/qwen3-32b` now that `llama-3.3-70b-versatile` is the primary model.
 - Updated Docker Compose mounts to include `.env` in-container so runtime AI config refresh can read live model changes from your `.env` file.
 
 ### Tested
 
 - Added/updated regression tests for deterministic news summary/follow-up output, date-intent routing, and reasoning-only primary-model retry behavior.
 - Added tests covering NASA-topic routing through NASA's official RSS source and fallback behavior.
-- Full suite passing: `157 passed`.
+- Added regression tests for `what about <city>` weather follow-ups and AI-grounded news rewrite/fallback behavior.
+- Added regression tests for news follow-up date extraction from source metadata and origin-question handling.
+- Added regression tests for curated conflict RSS routing, fallback behavior, and duplicate/off-topic filtering.
+- Added regression tests for query-aware conflict headline prioritization and default model config changes.
+- Full suite passing: `173 passed`.
 
 ## [1.2.21] - 2026-04-04
 

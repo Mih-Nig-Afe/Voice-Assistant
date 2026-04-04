@@ -5,9 +5,13 @@ Fetches latest headlines using the GNews API (free, no key required for basic us
 and NewsAPI.org as fallback.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+import html
 import time
 from typing import Optional
 from email.utils import parsedate_to_datetime
+import xml.etree.ElementTree as ET
 
 import requests
 import re
@@ -58,6 +62,48 @@ _GENERIC_CONFLICT_KEYWORDS = {
 _WEAK_TOPIC_KEYWORDS = {"us"}
 _NASA_BREAKING_NEWS_RSS = "https://www.nasa.gov/rss/dyn/breaking_news.rss"
 _NASA_TOPIC_HINTS = {"nasa", "artemis", "orion", "sls", "moon", "lunar", "apollo"}
+_CONFLICT_TOPIC_HINTS = {
+    "war",
+    "conflict",
+    "iran",
+    "israel",
+    "ukraine",
+    "russia",
+    "gaza",
+    "hamas",
+    "lebanon",
+    "beirut",
+    "syria",
+    "yemen",
+    "sudan",
+    "missile",
+    "strike",
+    "strikes",
+    "attack",
+    "attacking",
+    "ceasefire",
+}
+_MIDDLE_EAST_TOPIC_HINTS = {
+    "iran",
+    "israel",
+    "gaza",
+    "hamas",
+    "lebanon",
+    "beirut",
+    "syria",
+    "yemen",
+    "middle",
+    "east",
+}
+_CONFLICT_NEWS_RSS_SOURCES = [
+    ("BBC News", "https://feeds.bbci.co.uk/news/world/rss.xml"),
+    ("NPR", "https://feeds.npr.org/1004/rss.xml"),
+    ("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"),
+    ("DW", "https://rss.dw.com/rdf/rss-en-world"),
+]
+_MIDDLE_EAST_CONFLICT_RSS_SOURCES = [
+    ("BBC News", "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml"),
+]
 
 
 def _topic_keywords(topic: str) -> list[str]:
@@ -209,6 +255,239 @@ def _is_nasa_space_topic(topic: Optional[str]) -> bool:
     return any(hint in normalized for hint in _NASA_TOPIC_HINTS)
 
 
+def _is_conflict_topic(topic: Optional[str]) -> bool:
+    """Return True when a topic likely refers to war/conflict coverage."""
+    keywords = set(_topic_keywords(topic or ""))
+    if not keywords:
+        return False
+    if keywords.intersection(_CONFLICT_TOPIC_HINTS):
+        return True
+    return bool(keywords.intersection(_GENERIC_CONFLICT_KEYWORDS) and len(keywords) >= 2)
+
+
+def _conflict_feed_sources(topic: str) -> list[tuple[str, str]]:
+    """Return curated RSS feeds for conflict-heavy topics."""
+    keywords = set(_topic_keywords(topic))
+    ordered_sources: list[tuple[str, str]] = []
+    if keywords.intersection(_MIDDLE_EAST_TOPIC_HINTS):
+        ordered_sources.extend(_MIDDLE_EAST_CONFLICT_RSS_SOURCES)
+    ordered_sources.extend(_CONFLICT_NEWS_RSS_SOURCES)
+
+    deduped: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+    for source_name, url in ordered_sources:
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        deduped.append((source_name, url))
+    return deduped
+
+
+def _xml_local_name(tag: str) -> str:
+    """Return an XML tag name without namespace."""
+    raw = str(tag or "")
+    if "}" in raw:
+        raw = raw.rsplit("}", 1)[-1]
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    return raw.lower()
+
+
+def _element_text(element: ET.Element) -> str:
+    """Return normalized text content for an XML element."""
+    text = " ".join(part.strip() for part in element.itertext() if part and part.strip())
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def _parse_feed_datetime(raw_value: str) -> Optional[datetime]:
+    """Parse common RSS/Atom datetime values into UTC datetimes."""
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        pass
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _normalize_feed_title(title: str, source_name: str) -> str:
+    """Clean common feed-specific suffixes from RSS titles."""
+    clean = re.sub(r"\s+", " ", html.unescape(title or "")).strip()
+    suffix_patterns = {
+        "BBC News": [r"\s*-\s*BBC News\s*$"],
+        "DW": [r"\s*\|\s*DW\s*$"],
+    }
+    for pattern in suffix_patterns.get(source_name, []):
+        clean = re.sub(pattern, "", clean, flags=re.IGNORECASE).strip()
+    return clean
+
+
+def _parse_rss_entries(xml_text: str, source_name: str) -> list[dict]:
+    """Parse RSS/Atom XML into normalized feed entries."""
+    try:
+        root = ET.fromstring(xml_text or "")
+    except ET.ParseError:
+        return []
+
+    entries: list[dict] = []
+    for element in root.iter():
+        if _xml_local_name(element.tag) not in {"item", "entry"}:
+            continue
+
+        title = ""
+        published_raw = ""
+        summary = ""
+        for child in list(element):
+            child_name = _xml_local_name(child.tag)
+            if child_name == "title" and not title:
+                title = _element_text(child)
+            elif child_name in {"pubdate", "published", "updated", "date"} and not published_raw:
+                published_raw = _element_text(child)
+            elif child_name in {"description", "summary", "content"} and not summary:
+                summary = _element_text(child)
+
+        clean_title = _normalize_feed_title(title, source_name)
+        if not clean_title:
+            continue
+
+        published_at = _parse_feed_datetime(published_raw)
+        entries.append(
+            {
+                "title": clean_title,
+                "summary": summary,
+                "source": source_name,
+                "published_at": published_at,
+                "published_sort": published_at.timestamp() if published_at else 0.0,
+                "date_label": published_at.strftime("%Y-%m-%d") if published_at else "",
+            }
+        )
+    return entries
+
+
+def _fetch_rss_entries(source_name: str, url: str) -> list[dict]:
+    """Fetch and parse one RSS source."""
+    try:
+        start = time.perf_counter()
+        response = requests.get(url, timeout=min(Config.HTTP_TIMEOUT, 4))
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "%s RSS request completed in %.1fms (status=%s)",
+            source_name,
+            elapsed_ms,
+            response.status_code,
+        )
+        response.raise_for_status()
+        return _parse_rss_entries(response.text or "", source_name)
+    except Exception as exc:
+        logger.warning("%s RSS fetch failed: %s", source_name, exc)
+        return []
+
+
+def _dedupe_feed_title_key(title: str) -> str:
+    """Build a stable dedupe key for cross-source headline titles."""
+    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
+def _get_conflict_headlines(topic: str, count: int = 5) -> str:
+    """
+    Fetch curated conflict headlines from free official RSS feeds.
+
+    Returns empty string when no relevant curated items are available.
+    """
+    keywords = _topic_keywords(topic)
+    if not keywords:
+        return ""
+
+    feed_sources = _conflict_feed_sources(topic)
+    if not feed_sources:
+        return ""
+
+    candidates: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(4, len(feed_sources))) as executor:
+        future_map = {
+            executor.submit(_fetch_rss_entries, source_name, url): (source_index, source_name)
+            for source_index, (source_name, url) in enumerate(feed_sources)
+        }
+        for future in as_completed(future_map):
+            source_index, source_name = future_map[future]
+            entries = future.result() or []
+            for entry in entries:
+                text = f"{entry['title']} {entry.get('summary', '')}".strip()
+                matched = _matched_topic_keywords(text, keywords)
+                if not _is_topic_match_sufficient(matched, keywords):
+                    continue
+                specificity_bonus = len(
+                    {
+                        keyword
+                        for keyword in matched
+                        if keyword not in _WEAK_TOPIC_KEYWORDS
+                        and keyword not in _GENERIC_CONFLICT_KEYWORDS
+                    }
+                )
+                score = _score_news_text_relevance(text, keywords) + (specificity_bonus * 2)
+                if score <= 0:
+                    continue
+                candidates.append(
+                    {
+                        **entry,
+                        "score": score,
+                        "source_index": source_index,
+                        "source_name": source_name,
+                    }
+                )
+
+    if not candidates:
+        return ""
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item["score"],
+            item["published_sort"],
+            -item["source_index"],
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict] = []
+    seen_titles: set[str] = set()
+    for candidate in ranked:
+        dedupe_key = _dedupe_feed_title_key(candidate["title"])
+        if not dedupe_key or dedupe_key in seen_titles:
+            continue
+        seen_titles.add(dedupe_key)
+        selected.append(candidate)
+        if len(selected) >= count:
+            break
+
+    if not selected:
+        return ""
+
+    pretty_topic = _format_topic_label(topic)
+    header = (
+        f"Here are the latest curated conflict headlines on {pretty_topic}:"
+        if pretty_topic
+        else "Here are the latest curated conflict headlines:"
+    )
+    lines = []
+    for idx, item in enumerate(selected[:count], 1):
+        source = item["source"]
+        if item["date_label"]:
+            source = f"{source}, {item['date_label']}"
+        lines.append(f"{idx}. {item['title']} ({source})")
+    return header + "\n" + "\n".join(lines)
+
+
 def _get_nasa_headlines(topic: str, count: int = 5) -> str:
     """
     Fetch NASA updates from NASA's free official RSS feed.
@@ -298,6 +577,10 @@ def get_top_headlines(topic: Optional[str] = None, count: int = 5) -> str:
         nasa_updates = _get_nasa_headlines(topic=topic, count=count)
         if nasa_updates:
             return nasa_updates
+    if topic and _is_conflict_topic(topic):
+        curated_conflict = _get_conflict_headlines(topic=topic, count=count)
+        if curated_conflict:
+            return curated_conflict
 
     if not api_key:
         return _get_headlines_fallback(topic, count)

@@ -1,7 +1,7 @@
 """
 AI Response Generation module for Voice Assistant.
 
-Primary backend: Groq API (free tier — GPT OSS 120B default, fast inference).
+Primary backend: Groq API (free tier — Llama 3.3 70B default, fast inference).
 Fallback backend: HuggingFace transformers (local GPT-Neo 125M).
 
 Why Groq?
@@ -37,7 +37,7 @@ _SYSTEM_PROMPT = (
     "Keep responses concise (2-3 sentences) since they may be spoken aloud. "
     "Be accurate, conversational, and honest when uncertain."
 )
-_AI_MODEL_HARD_FALLBACK = "llama-3.3-70b-versatile"
+_AI_MODEL_HARD_FALLBACK = "openai/gpt-oss-120b"
 _MODEL_FAILURE_COUNTS: dict[str, int] = {}
 _MODEL_EMPTY_COUNTS: dict[str, int] = {}
 _MODEL_BLOCKLIST: set[str] = set()
@@ -243,6 +243,12 @@ def _load_backend() -> None:
 def generate_response(
     prompt: str,
     conversation_history: Optional[list[dict[str, str]]] = None,
+    *,
+    system_prompt: Optional[str] = None,
+    max_prompt_length: int = 500,
+    max_response_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    use_fallback_models: bool = True,
 ) -> str:
     """
     Generate an AI response using the best available backend.
@@ -254,7 +260,7 @@ def generate_response(
     Returns:
         Generated response text, or a fallback message on failure.
     """
-    prompt = sanitize_query(prompt, max_length=500)
+    prompt = sanitize_query(prompt, max_length=max_prompt_length)
     if not prompt:
         return "I didn't catch that clearly. Please ask again."
 
@@ -262,7 +268,14 @@ def generate_response(
     _load_backend()
 
     if _backend == "groq":
-        return _generate_groq(prompt, conversation_history)
+        return _generate_groq(
+            prompt,
+            conversation_history,
+            system_prompt=system_prompt,
+            max_response_tokens=max_response_tokens,
+            temperature=temperature,
+            use_fallback_models=use_fallback_models,
+        )
     elif _backend == "huggingface":
         return _generate_huggingface(prompt)
     else:
@@ -274,6 +287,10 @@ def generate_response(
 def _generate_groq(
     prompt: str,
     history: Optional[list[dict[str, str]]] = None,
+    system_prompt: Optional[str] = None,
+    max_response_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    use_fallback_models: bool = True,
 ) -> str:
     """Generate response via Groq API with conversation context."""
     global _LAST_MODEL_USED
@@ -281,23 +298,28 @@ def _generate_groq(
         if _groq_client is None:
             return "AI service is not ready yet."
 
-        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": system_prompt or _SYSTEM_PROMPT}]
         if history:
             messages.extend(history[-Config.AI_MAX_HISTORY :])
         messages.append({"role": "user", "content": prompt})
 
-        model_candidates = _get_model_candidates()
-        if not model_candidates:
-            model_candidates = [_AI_MODEL_HARD_FALLBACK]
+        if use_fallback_models:
+            model_candidates = _get_model_candidates()
+            if not model_candidates:
+                model_candidates = [_AI_MODEL_HARD_FALLBACK]
+        else:
+            model_candidates = [Config.AI_MODEL or _AI_MODEL_HARD_FALLBACK]
 
+        requested_max_tokens = max_response_tokens or Config.AI_MAX_LENGTH
+        requested_temperature = 0.4 if temperature is None else temperature
         last_error = None
         for model_name in model_candidates:
             try:
                 response = _groq_client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    max_tokens=Config.AI_MAX_LENGTH,
-                    temperature=0.4,
+                    max_tokens=requested_max_tokens,
+                    temperature=requested_temperature,
                 )
                 text, finish_reason, reasoning_text = _extract_chat_text(response)
                 if (
@@ -305,7 +327,7 @@ def _generate_groq(
                     and finish_reason == "length"
                     and reasoning_text
                 ):
-                    retry_max_tokens = max(Config.AI_MAX_LENGTH * 2, 320)
+                    retry_max_tokens = max(requested_max_tokens * 2, 320)
                     logger.info(
                         "Groq model '%s' returned reasoning-only output; retrying with max_tokens=%d.",
                         model_name,
@@ -315,7 +337,19 @@ def _generate_groq(
                         model=model_name,
                         messages=messages,
                         max_tokens=retry_max_tokens,
-                        temperature=0.2,
+                        temperature=requested_temperature if temperature is not None else 0.2,
+                    )
+                    text, _, _ = _extract_chat_text(retry_response)
+                if not text:
+                    logger.info(
+                        "Groq model '%s' returned empty output; retrying once before fallback.",
+                        model_name,
+                    )
+                    retry_response = _groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        max_tokens=requested_max_tokens,
+                        temperature=requested_temperature if temperature is not None else 0.2,
                     )
                     text, _, _ = _extract_chat_text(retry_response)
                 if text:
@@ -332,8 +366,9 @@ def _generate_groq(
                 last_error = RuntimeError("empty response body")
                 _record_model_empty(model_name)
                 logger.warning(
-                    "Groq model '%s' returned empty response. Trying fallback model if available.",
+                    "Groq model '%s' returned empty response.%s",
                     model_name,
+                    " Trying fallback model if available." if use_fallback_models else "",
                 )
             except Exception as model_exc:
                 last_error = model_exc
